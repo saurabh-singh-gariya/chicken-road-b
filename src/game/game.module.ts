@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
-import { GameConfigModule } from 'src/gameConfig/game-config.module';
 import { AuthModule } from '../auth/auth.module';
+import { GameConfigModule } from '../gameConfig/game-config.module';
 import { RedisModule } from '../redis/redis.module';
 import { TransactionModule } from '../transaction/transaction.module';
 import { WalletModule } from '../wallet/wallet.module';
