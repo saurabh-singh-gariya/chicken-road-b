@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { GameConfig } from 'src/entities/game-config.entity';
+import { GameConfig } from '../entities/game-config.entity';
 import { GameConfigService } from './game-config.service';
 
 @Module({
