@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomBytes } from 'crypto';
-import { TransactionType } from 'src/entities/transaction-history.entity';
-import { RedisService } from 'src/redis/redis.service';
-import { TransactionService } from 'src/transaction/transaction.service';
-import { WalletService } from 'src/wallet/wallet.service';
+import { TransactionType } from '../entities/transaction-history.entity';
+import { RedisService } from '../redis/redis.service';
+import { TransactionService } from '../transaction/transaction.service';
+import { WalletService } from '../wallet/wallet.service';
 import { Difficulty } from './dto/bet-payload.dto';
 import { generateHazardColumns } from './utils/hazards.utils';
 import { generateColumnMultipliers } from './utils/multiplier.util';
