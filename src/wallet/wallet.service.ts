@@ -1,9 +1,9 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { User } from 'src/entities/User.entity';
-import { Wallet } from 'src/entities/Wallet.entity';
-import { RedisService } from 'src/redis/redis.service';
 import { Repository } from 'typeorm';
+import { User } from '../entities/User.entity';
+import { Wallet } from '../entities/Wallet.entity';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class WalletService {
