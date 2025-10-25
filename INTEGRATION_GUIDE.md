@@ -8,6 +8,22 @@ Target audience: Front-end / UI engineer integrating authentication, wallet oper
 
 The Chicken Road backend exposes REST endpoints (health, auth, wallet) and a WebSocket `/game` namespace for interactive betting gameplay (bet, step, cashout). JWT auth protects wallet routes. Real-time messages update game session state and balances.
 
+### New: Unified API & WebSocket Documentation
+
+Interactive OpenAPI (Swagger UI) is now available at: `GET /api/swagger`
+
+Contents:
+
+- REST endpoints with schemas & auth requirements (Bearer JWT)
+- WebSocket namespace and events under vendor extension `x-websocket`
+- Models for all game action payloads (bet, step, cashout, get_active_session)
+
+Usage Tips:
+
+- Click "Authorize" and paste your JWT to unlock protected routes.
+- See `x-websocket` section at the bottom of the raw JSON ("Download JSON") for structured event metadata.
+- Copy model examples directly for quick payload construction in tests.
+
 Entities referenced generically: `userId`, `sessionId`, `transactionId`. Unknown / unspecified fields are marked `???`.
 
 ---

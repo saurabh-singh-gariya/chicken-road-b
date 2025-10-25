@@ -1,5 +1,6 @@
-import { Logger, UseGuards } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ApiTags } from '@nestjs/swagger';
 import {
   ConnectedSocket,
   MessageBody,
@@ -12,15 +13,14 @@ import {
 import { plainToInstance } from 'class-transformer';
 import { validateOrReject } from 'class-validator';
 import { Server, Socket } from 'socket.io';
-import { WsJwtAuthGuard } from '../auth/ws-jwt-auth.guard';
 import { GameConfigService } from '../gameConfig/game-config.service';
 import { BetPayloadDto } from './dto/bet-payload.dto';
 import { GameAction, GameActionDto } from './dto/game-action.dto';
 import { StepPayloadDto } from './dto/step-payload.dto';
 import { GameService } from './game.service';
 
+@ApiTags('game')
 @WebSocketGateway({ namespace: 'game', cors: true })
-@UseGuards(WsJwtAuthGuard)
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
