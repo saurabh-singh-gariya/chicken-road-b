@@ -26,7 +26,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: JwtPayload): Promise<Admin> {
+  async validate(payload: JwtPayload): Promise<Admin | any> {
+    const enableAuth = this.config.get<boolean>('app.enableAuth') ?? true;
+    if (!enableAuth) {
+      return { id: 'anonymous', username: 'anonymous', anonymous: true };
+    }
     const admin = await this.adminRepo.findOne({ where: { id: payload.sub } });
     if (!admin) throw new UnauthorizedException('Invalid token subject');
     return admin; // attached to request.user

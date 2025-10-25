@@ -4,20 +4,31 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Socket } from 'socket.io';
 
 @Injectable()
 export class WsJwtAuthGuard implements CanActivate {
-  constructor(private readonly jwt: JwtService) {}
+  private readonly enableAuth: boolean;
+
+  constructor(
+    private readonly jwt: JwtService,
+    cfg: ConfigService,
+  ) {
+    this.enableAuth = cfg.get<boolean>('app.enableAuth') ?? true;
+  }
 
   canActivate(context: ExecutionContext): boolean | Promise<boolean> {
     const client: Socket = context.switchToWs().getClient();
+    if (!this.enableAuth) {
+      (client.data ||= {}).auth = { sub: 'anonymous', anonymous: true };
+      return true;
+    }
     const token = this.extractToken(client);
     if (!token) throw new UnauthorizedException('Missing token');
     try {
       const payload = this.jwt.verify(token);
-      // Attach to client for later use
       (client.data ||= {}).auth = payload;
       return true;
     } catch (e) {

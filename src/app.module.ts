@@ -1,6 +1,6 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -17,6 +17,7 @@ import { User } from './entities/User.entity';
 import { Wallet } from './entities/Wallet.entity';
 import { GameModule } from './game/game.module';
 import { GameConfigModule } from './gameConfig/game-config.module';
+import { HealthController } from './health.controller';
 import { RedisModule } from './redis/redis.module';
 import { TransactionModule } from './transaction/transaction.module';
 import { WalletModule } from './wallet/wallet.module';
@@ -25,12 +26,13 @@ import { WalletModule } from './wallet/wallet.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: ['.env'],
       load: [appConfig, databaseConfig, redisConfig, jwtConfig],
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (cfg: ConfigService) => {
+      useFactory: (cfg: ConfigService): TypeOrmModuleOptions => {
         interface DatabaseConfig {
           host: string;
           port: number;
@@ -40,7 +42,7 @@ import { WalletModule } from './wallet/wallet.module';
           synchronize: boolean;
         }
         const dbConfig = cfg.get<DatabaseConfig>('database');
-        return {
+        const cfgObj: TypeOrmModuleOptions = {
           type: 'mysql',
           host: dbConfig?.host,
           port: dbConfig?.port,
@@ -49,8 +51,12 @@ import { WalletModule } from './wallet/wallet.module';
           database: dbConfig?.database,
           synchronize: dbConfig?.synchronize,
           autoLoadEntities: true,
-          logging: ['error'],
+          // logging: ['error'] // optional, omit for compatibility
         };
+        Logger.log(
+          `Database config -> host=${cfgObj.host} port=${cfgObj.port} db=${cfgObj.database} sync=${cfgObj.synchronize}`,
+        );
+        return cfgObj;
       },
     }),
     TypeOrmModule.forFeature([
@@ -69,7 +75,7 @@ import { WalletModule } from './wallet/wallet.module';
     TransactionModule,
     AuthModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [AppService],
 })
 export class AppModule {}
