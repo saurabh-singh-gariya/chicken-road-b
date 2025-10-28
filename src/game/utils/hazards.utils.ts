@@ -14,10 +14,15 @@ export function generateHazardColumns(
   step: number,
   hazardCount: number,
   totalColumns: number,
+  userSeed?: string,
+  nonce?: number,
 ): number[] {
-  const random = createHmac('sha256', serverSeed)
-    .update(step.toString())
-    .digest('hex');
+  // Composite message: userSeed:nonce:step when provided to enhance uniqueness & fairness auditability
+  const message =
+    userSeed && typeof nonce === 'number'
+      ? `${userSeed}:${nonce}:${step}`
+      : step.toString();
+  const random = createHmac('sha256', serverSeed).update(message).digest('hex');
 
   const hazardColumns = new Set<number>();
   let i = 0;

@@ -13,14 +13,27 @@ export function setupSwagger(app: INestApplication) {
   const config = new DocumentBuilder()
     .setTitle('Chicken Road API')
     .setDescription(
-      'REST and WebSocket API documentation. WebSocket events are described via the x-websocket extension. (Auth temporarily disabled for wallet/game.)',
+      'REST and WebSocket API documentation. WebSocket events are described via the x-websocket extension. Use bearer JWT for secured endpoints; some endpoints may be temporarily public depending on configuration.',
     )
     .setVersion('1.0.0')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description:
+          'Supply the access token returned by /auth/token or /auth/player/login. Either use `Bearer <token>` or raw token for WebSocket connection (see x-websocket).',
+      },
+      'access-token',
+    )
     .addTag('auth')
     .addTag('wallet')
     .addTag('health')
     .addTag('app')
     .addTag('game')
+    .addTag('user')
+    .addServer('http://localhost:3000', 'Local HTTP')
+    .addServer('ws://localhost:3000/io', 'Local WebSocket (Socket.IO path)')
     .build();
 
   const document = SwaggerModule.createDocument(app, config, {
@@ -36,21 +49,37 @@ export function setupSwagger(app: INestApplication) {
     ],
   });
 
-  // Vendor extension for websocket events
+  // Vendor extension for websocket events (consumed by custom UI logic or future plugin)
   (document as any)['x-websocket'] = {
     transport: 'socket.io',
-    namespace: 'game',
+    path: '/io/',
+    namespace: null,
     authentication: {
-      type: 'bearer',
-      location: 'Authorization header or handshake auth.token / query.token',
+      type: 'bearer-or-raw-jwt',
+      location:
+        'Authorization header (Bearer <token> or raw token) OR handshake auth.token OR query parameters ?token=<jwt> / ?Authorization=<jwt>',
       format: 'JWT',
+    },
+    queryParameters: {
+      gameMode: {
+        type: 'string',
+        description: 'Game mode identifier (e.g. chicken-road)',
+      },
+      operatorId: {
+        type: 'string',
+        description: 'External operator identifier / tenant id',
+      },
+      Authorization: {
+        type: 'string',
+        description: 'JWT token if not using header or auth object',
+      },
     },
     events: [
       {
         name: 'betConfig',
         direction: 'server->client',
         description:
-          'Initial bet configuration emitted after successful connection.',
+          'Initial betting limits/config sent once after authentication.',
         payload: {
           type: 'object',
           properties: {
@@ -69,41 +98,58 @@ export function setupSwagger(app: INestApplication) {
         name: 'game-service',
         direction: 'bidirectional',
         description:
-          'Single multiplexed event for all game actions. Client emits GameActionDto; server responds on same event with an action-specific response or error.',
+          'Multiplexed event for all game actions; client emits GameActionDto, server responds with action-specific object or error.',
         payload: { $ref: '#/components/schemas/GameActionDto' },
+        examples: {
+          bet: {
+            value: {
+              action: 'bet',
+              payload: { betAmount: 500, difficulty: 'medium' },
+            },
+          },
+          step: {
+            value: { action: 'step', payload: { lineNumber: 3 } },
+          },
+          cashout: { value: { action: 'cashout' } },
+          getSession: { value: { action: 'get_game_session' } },
+          getConfig: { value: { action: 'get_game_config' } },
+        },
         actions: [
           {
             action: 'bet',
-            description: 'Place a bet with betAmount and difficulty',
+            description:
+              'Place a bet with betAmount (number) & difficulty enum',
             payload: { $ref: '#/components/schemas/BetPayloadDto' },
           },
           {
             action: 'step',
             description:
-              'Advance to the next line number in an active session.',
+              'Advance to the provided lineNumber in current session',
             payload: { $ref: '#/components/schemas/StepPayloadDto' },
           },
           {
             action: 'cashout',
-            description: 'Attempt to cash out current session winnings.',
-            payload: { $ref: '#/components/schemas/CashoutPayloadDto' },
+            description: 'Attempt to cash out current session winnings',
           },
           {
-            action: 'get_active_session',
-            description: 'Retrieve the active game session state if any.',
+            action: 'get_game_session',
+            description: 'Retrieve current active session state if any',
+          },
+          {
+            action: 'get_game_config',
+            description: 'Fetch public game configuration/meta data',
           },
         ],
       },
     ],
   };
 
-  // Synthetic path to surface websocket actions directly in UI (since vendor extensions not rendered by default)
-  (document.paths ||= {})['/ws/game'] = {
+  (document.paths ||= {})['/io'] = {
     post: {
       tags: ['game'],
-      summary: 'Send a game action over WebSocket (documentation shim)',
+      summary: 'Emit game-service event (documentation only)',
       description:
-        'This is a documentation-only endpoint representing the Socket.IO `game-service` event. Use a WS client; do not call via HTTP. Payload conforms to GameActionDto.',
+        'Send Socket.IO event "game-service" with a JSON body matching GameActionDto. Do NOT call via HTTP. Examples cover bet, step, cashout, get_game_session, get_game_config.',
       requestBody: {
         required: true,
         content: {
@@ -116,13 +162,10 @@ export function setupSwagger(app: INestApplication) {
                   payload: { betAmount: 500, difficulty: 'medium' },
                 },
               },
-              step: {
-                value: { action: 'step', payload: { lineNumber: 2 } },
-              },
-              cashout: { value: { action: 'cashout', payload: {} } },
-              getActive: {
-                value: { action: 'get_active_session', payload: {} },
-              },
+              step: { value: { action: 'step', payload: { lineNumber: 2 } } },
+              cashout: { value: { action: 'cashout' } },
+              getSession: { value: { action: 'get_game_session' } },
+              getConfig: { value: { action: 'get_game_config' } },
             },
           },
         },
@@ -130,7 +173,7 @@ export function setupSwagger(app: INestApplication) {
       responses: {
         200: {
           description:
-            'Action-specific response (varies by server logic). For errors, an object with { error }.',
+            'Action-specific response (varies). Errors returned as { error }.',
         },
       },
     },

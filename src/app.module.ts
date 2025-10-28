@@ -19,8 +19,11 @@ import { GameModule } from './game/game.module';
 import { GameConfigModule } from './gameConfig/game-config.module';
 import { HealthController } from './health.controller';
 import { RedisModule } from './redis/redis.module';
+import { DatabaseSeedService } from './scripts/database-seed.service';
 import { TransactionModule } from './transaction/transaction.module';
+import { UserModule } from './user/user.module';
 import { WalletModule } from './wallet/wallet.module';
+import { WellKnownController } from './well-known.controller';
 
 @Module({
   imports: [
@@ -70,12 +73,13 @@ import { WalletModule } from './wallet/wallet.module';
     ]),
     RedisModule,
     WalletModule,
+    UserModule,
     GameConfigModule,
     GameModule,
     TransactionModule,
     AuthModule,
   ],
-  controllers: [AppController, HealthController],
-  providers: [AppService],
+  controllers: [AppController, HealthController, WellKnownController],
+  providers: [AppService, DatabaseSeedService],
 })
 export class AppModule {}

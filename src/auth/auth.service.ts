@@ -10,11 +10,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
 import { Admin } from '../entities/admin.entity';
+import { User } from '../entities/User.entity';
 
 @Injectable()
 export class AuthService {
   constructor(
     @InjectRepository(Admin) private readonly adminRepo: Repository<Admin>,
+    @InjectRepository(User) private readonly userRepo: Repository<User>,
     private readonly jwt: JwtService,
   ) {}
 
@@ -43,6 +45,60 @@ export class AuthService {
       accessToken,
       tokenType: 'Bearer',
     };
+  }
+
+  // PLAYER AUTH SECTION --------------------------------------------------
+
+  async validatePlayer(username: string, password: string): Promise<User> {
+    const user = await this.userRepo.findOne({ where: { name: username } });
+    if (!user || !user.passwordHash) {
+      this.logger.warn(`Player login failed (not found) username=${username}`);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) {
+      this.logger.warn(
+        `Player login failed (bad password) username=${username}`,
+      );
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    this.logger.log(`Player login success username=${username} id=${user.id}`);
+    return user;
+  }
+
+  async createPlayer(username: string, password: string, avatar: string) {
+    const existing = await this.userRepo.findOne({ where: { name: username } });
+    if (existing) {
+      this.logger.warn(`Player register conflict username=${username}`);
+      throw new ConflictException('Username already taken');
+    }
+    try {
+      const passwordHash = await bcrypt.hash(password, 12);
+      const user = this.userRepo.create({
+        name: username,
+        passwordHash,
+        avatar,
+      });
+      const saved = await this.userRepo.save(user);
+      this.logger.log(`Player created username=${username} id=${saved.id}`);
+      return saved;
+    } catch (err: any) {
+      if (err?.code === 'ER_DUP_ENTRY' || err?.errno === 1062) {
+        this.logger.warn(`Player register duplicate username=${username}`);
+        throw new ConflictException('Username already taken');
+      }
+      this.logger.error(
+        `Player register failed username=${username} err=${err?.code || err?.message}`,
+      );
+      throw new InternalServerErrorException('Unable to create user');
+    }
+  }
+
+  async generatePlayerToken(user: User) {
+    const payload = { sub: user.id, username: user.name, type: 'player' };
+    const accessToken = await this.jwt.signAsync(payload);
+    this.logger.debug(`Issued player token sub=${user.id}`);
+    return { accessToken, tokenType: 'Bearer' };
   }
 
   async createAdmin(username: string, password: string) {

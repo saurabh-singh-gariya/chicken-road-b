@@ -21,6 +21,9 @@ export class User {
   @Column()
   avatar: string;
 
+  @Column({ nullable: true })
+  passwordHash?: string;
+
   @OneToOne(() => Wallet, (wallet) => wallet.user)
   @JoinColumn()
   wallet: Wallet;

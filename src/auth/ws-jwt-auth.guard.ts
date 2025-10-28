@@ -37,12 +37,19 @@ export class WsJwtAuthGuard implements CanActivate {
   }
 
   private extractToken(client: Socket): string | undefined {
-    // Priority: header Authorization, then query.token
     const authHeader = client.handshake.headers['authorization'];
-    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      return authHeader.slice(7).trim();
+    if (typeof authHeader === 'string') {
+      if (authHeader.startsWith('Bearer ')) {
+        return authHeader.slice(7).trim();
+      }
+      if (
+        /^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.[A-Za-z0-9-_.+/=]+$/.test(
+          authHeader.trim(),
+        )
+      ) {
+        return authHeader.trim();
+      }
     }
-    // Next: Socket.IO auth payload (client side: io(url, { auth: { token } }))
     const authObj: any = client.handshake.auth;
     if (authObj?.token) {
       if (Array.isArray(authObj.token)) return authObj.token[0];
@@ -50,6 +57,10 @@ export class WsJwtAuthGuard implements CanActivate {
     }
     const q: any = client.handshake.query;
     if (q?.token) return Array.isArray(q.token) ? q.token[0] : q.token;
+    if (q?.Authorization)
+      return Array.isArray(q.Authorization)
+        ? q.Authorization[0]
+        : q.Authorization;
     return undefined;
   }
 }

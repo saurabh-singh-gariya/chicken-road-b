@@ -5,6 +5,7 @@ import { RedisService } from '../redis/redis.service';
 import { TransactionService } from '../transaction/transaction.service';
 import { WalletService } from '../wallet/wallet.service';
 import { Difficulty } from './dto/bet-payload.dto';
+import { ProvablyFairService } from './provably-fair.service';
 import { generateHazardColumns } from './utils/hazards.utils';
 import { generateColumnMultipliers } from './utils/multiplier.util';
 
@@ -24,14 +25,13 @@ interface GameSession {
 }
 
 interface StepResponse {
-  isActive: boolean;
+  isFinished: boolean;
   isWin: boolean;
-  currentStep: number;
+  lineNumber: number;
   winAmount: number;
   betAmount: number;
   multiplier: number;
   difficulty: Difficulty;
-  profit: number; // winAmount - betAmount
   endReason?: 'win' | 'cashout' | 'hazard';
 }
 
@@ -50,13 +50,15 @@ export class GameService {
     private readonly redisService: RedisService,
     private readonly walletService: WalletService,
     private readonly transactionService: TransactionService,
+    private readonly fairService: ProvablyFairService,
   ) {}
 
   private getRedisKey(userId: string): string {
     return `game_session:${userId}`;
   }
 
-  private generateServerSeed(): string {
+  // Deprecated internal seed generator; fairness service manages server seeds.
+  private generateLegacyServerSeed(): string {
     return randomBytes(16).toString('hex');
   }
 
@@ -71,14 +73,13 @@ export class GameService {
     endReason?: 'win' | 'cashout' | 'hazard',
   ): StepResponse {
     return {
-      isActive,
+      isFinished: !isActive,
       isWin,
-      currentStep,
+      lineNumber: currentStep,
       winAmount,
       betAmount,
       multiplier,
       difficulty,
-      profit: winAmount - betAmount,
       endReason,
     };
   }
@@ -109,7 +110,6 @@ export class GameService {
   }
 
   private async debitBetIfNeeded(userId: string, session: GameSession) {
-    if (session.betDebited) return;
     await this.walletService.withdrawFromWallet(userId, session.betAmount);
     const balance = await this.walletService.getBalance(userId);
     await this.recordTransaction(
@@ -150,12 +150,19 @@ export class GameService {
     betAmount: number,
     difficulty: Difficulty,
   ): Promise<StepResponse> {
+    //TODO: Get the column multipliers from config DB or cache
     const columnMultipliers = generateColumnMultipliers(
       20.5,
       this.totalColumns,
     );
 
-    const serverSeed = this.generateServerSeed();
+    // Use committed current server seed from fairness service
+    const seeds = await this.fairService.getSeeds();
+    const serverSeed = seeds.currentServerSeed;
+    // Reset / ensure user seed state exists and increment nonce for bet start (nonce after increment reflects first draw usage)
+    await this.fairService.incrementNonce(userId);
+    // Increment rounds count and rotate if needed
+    await this.fairService.incrementRoundAndRotateIfNeeded();
 
     const gameSession: GameSession = {
       userId,
@@ -171,8 +178,6 @@ export class GameService {
       betDebited: false,
     };
 
-    await this.redisService.set(this.getRedisKey(userId), gameSession);
-    // Debit bet upfront
     await this.debitBetIfNeeded(userId, gameSession);
     await this.redisService.set(this.getRedisKey(userId), gameSession);
     this.logger.log(
@@ -181,7 +186,8 @@ export class GameService {
     const currentMultiplier =
       gameSession.currentStep >= 0
         ? gameSession.columnMultipliers[gameSession.currentStep]
-        : 1; // No step taken yet
+        : 1;
+
     return this.sendStepResponse(
       gameSession.isActive,
       gameSession.isWin,
@@ -220,11 +226,16 @@ export class GameService {
     } else {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const hazardCount = this.difficultyHazards[gameSession.difficulty];
+      // Increment nonce BEFORE generating hazards for traceable sequence
+      await this.fairService.incrementNonce(userId);
+      const userState = await this.fairService.getUserSeedState(userId);
       const hazardColumns = generateHazardColumns(
         gameSession.serverSeed,
         lineNumber,
         hazardCount,
         this.totalColumns,
+        userState.userSeed,
+        userState.nonce,
       );
 
       const hitHazard = hazardColumns.includes(lineNumber);
@@ -276,6 +287,8 @@ export class GameService {
       return null;
     }
 
+    // Increment nonce for cashout randomness accounting (even if not used for RNG now, keeps sequence consistent)
+    await this.fairService.incrementNonce(userId);
     gameSession.isActive = false;
     const reachedFinal = gameSession.currentStep === this.totalColumns - 1;
     gameSession.isWin = reachedFinal;
@@ -299,5 +312,34 @@ export class GameService {
       gameSession.difficulty,
       endReason,
     );
+  }
+
+  private async getGameSession(userId: string): Promise<GameSession | null> {
+    const rawSession = await this.redisService.get(this.getRedisKey(userId));
+    const gameSession = rawSession as GameSession;
+    if (!gameSession) {
+      this.logger.warn(`No active game session for user ${userId}`);
+      return null;
+    }
+    return gameSession;
+  }
+
+  async getActiveSession(userId: string): Promise<GameSession | null> {
+    const gameSession = await this.getGameSession(userId);
+    if (!gameSession) {
+      this.logger.warn(`No active game session for user ${userId}`);
+      return null;
+    }
+    return this.sendStepResponse(
+      gameSession.isActive,
+      gameSession.isWin,
+      gameSession.currentStep,
+      gameSession.winAmount,
+      gameSession.betAmount,
+      gameSession.currentStep >= 0
+        ? gameSession.columnMultipliers[gameSession.currentStep]
+        : 1,
+      gameSession.difficulty,
+    ) as any;
   }
 }
