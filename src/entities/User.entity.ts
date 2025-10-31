@@ -1,7 +1,6 @@
 import {
   Column,
   Entity,
-  JoinColumn,
   OneToMany,
   OneToOne,
   PrimaryGeneratedColumn,
@@ -25,7 +24,6 @@ export class User {
   passwordHash?: string;
 
   @OneToOne(() => Wallet, (wallet) => wallet.user)
-  @JoinColumn()
   wallet: Wallet;
 
   @OneToMany(() => GameSession, (session) => session.user)
