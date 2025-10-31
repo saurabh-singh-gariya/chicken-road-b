@@ -1,11 +1,13 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { GameConfig } from '../entities/game-config.entity';
 import { Repository } from 'typeorm';
+import { GameConfig } from '../entities/game-config.entity';
 
 @Injectable()
 export class GameConfigService {
   private readonly logger = new Logger(GameConfigService.name);
+  private jwtSecretCache?: { value: string; expires: number };
+  private readonly JWT_CACHE_TTL_MS = 60_000; // 1 minute cache to avoid DB hits each token sign
 
   constructor(
     @InjectRepository(GameConfig)
@@ -20,6 +22,35 @@ export class GameConfigService {
     }
     this.logger.log(`Config for key: ${key}`);
     return config.value as string;
+  }
+
+  // Minimal helper for JWT secret retrieval with tiny cache & env fallback
+  async getJwtSecret(): Promise<string> {
+    const now = Date.now();
+    if (this.jwtSecretCache && this.jwtSecretCache.expires > now) {
+      return this.jwtSecretCache.value;
+    }
+    let secret: string | undefined;
+    try {
+      secret = await this.getConfig('jwt.secret');
+    } catch (e) {
+      // fallback to env if not present in DB
+      secret = process.env.JWT_SECRET;
+      if (!secret) {
+        this.logger.warn(
+          'JWT secret missing in DB and env; using dev fallback',
+        );
+        secret = 'CHANGE_ME_DEV_SECRET';
+      } else {
+        this.logger.warn('Using env JWT_SECRET (DB entry missing)');
+      }
+    }
+    // cache
+    this.jwtSecretCache = {
+      value: secret,
+      expires: now + this.JWT_CACHE_TTL_MS,
+    };
+    return secret;
   }
 
   async setConfig(key: string, value: string): Promise<GameConfig> {

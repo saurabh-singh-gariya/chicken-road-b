@@ -5,6 +5,8 @@ import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Admin } from '../entities/admin.entity';
 import { User } from '../entities/User.entity';
+import { GameConfigModule } from '../gameConfig/game-config.module';
+import { GameConfigService } from '../gameConfig/game-config.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -14,21 +16,23 @@ import { WsJwtAuthGuard } from './ws-jwt-auth.guard';
 @Module({
   imports: [
     ConfigModule,
+    GameConfigModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     TypeOrmModule.forFeature([Admin, User]),
     JwtModule.registerAsync({
-      inject: [ConfigService],
-      useFactory: (cfg: ConfigService) => {
+      imports: [ConfigModule, GameConfigModule],
+      inject: [ConfigService, GameConfigService],
+      useFactory: async (cfg: ConfigService, gc: GameConfigService) => {
         const jwtCfg = cfg.get('jwt') as
           | { secret: string; expiresIn: string }
           | undefined;
         const expiresRaw = jwtCfg?.expiresIn ?? '3600';
-        // Accept numeric seconds or duration string like '1h'. If pure digits, convert to number.
         const expiresIn: any = /^\d+$/.test(expiresRaw)
           ? parseInt(expiresRaw, 10)
           : expiresRaw;
+        const secret = await gc.getJwtSecret();
         return {
-          secret: jwtCfg?.secret || 'CHANGE_ME_DEV_SECRET',
+          secret,
           signOptions: { expiresIn },
         };
       },

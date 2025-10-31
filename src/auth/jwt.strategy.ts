@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { Repository } from 'typeorm';
 import { Admin } from '../entities/admin.entity';
+import { GameConfigService } from '../gameConfig/game-config.service';
 
 export interface JwtPayload {
   sub: string;
@@ -17,12 +18,20 @@ export interface JwtPayload {
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private readonly config: ConfigService,
+    private readonly gameConfig: GameConfigService,
     @InjectRepository(Admin) private readonly adminRepo: Repository<Admin>,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: config.get<string>('jwt.secret') || 'CHANGE_ME_DEV_SECRET',
+      secretOrKeyProvider: async (_request, rawJwt, done) => {
+        try {
+          const secret = await this.gameConfig.getJwtSecret();
+          done(null, secret);
+        } catch (e) {
+          done(e as any, null);
+        }
+      },
     });
   }
 
