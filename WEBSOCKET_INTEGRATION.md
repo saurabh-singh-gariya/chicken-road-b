@@ -11,7 +11,7 @@ Production Host (example): `ws://139.59.57.153`
 Socket.IO connection endpoint combines the host + path + required query params:
 
 ```
-ws://139.59.57.153/io/?gameMode=<DIFFICULTY>&operatorId=<OPERATOR_ID>&Authorization=<TOKEN>
+ws://139.59.57.153/io/?gameMode=<randomString>&operatorId=<OPERATOR_ID>&Authorization=<TOKEN>
 ```
 
 Required Query Parameters:
