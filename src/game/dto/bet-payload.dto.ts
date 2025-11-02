@@ -1,11 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEnum, IsNotEmpty, IsNumber } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsString } from 'class-validator';
 
 export enum Difficulty {
-  EASY = 'easy',
-  MEDIUM = 'medium',
-  HARD = 'hard',
-  EXTREME = 'extreme',
+  EASY = 'EASY',
+  MEDIUM = 'MEDIUM',
+  HARD = 'HARD',
+  DAREDEVIL = 'DAREDEVIL',
 }
 
 export class BetPayloadDto {
@@ -13,9 +13,9 @@ export class BetPayloadDto {
     example: 500,
     description: 'Amount of the bet placed by the user',
   })
-  @IsNumber()
+  @IsString()
   @IsNotEmpty()
-  betAmount: number;
+  betAmount: string;
 
   @ApiProperty({
     enum: Difficulty,
@@ -25,4 +25,16 @@ export class BetPayloadDto {
   @IsEnum(Difficulty)
   @IsNotEmpty()
   difficulty: Difficulty;
+
+  @ApiProperty({
+    example: 'USD',
+    description: 'Currency code for the bet amount',
+  })
+  currencyCode?: string;
+
+  @ApiProperty({
+    example: 'US',
+    description: 'Country code of the user placing the bet',
+  })
+  countryCode?: string;
 }

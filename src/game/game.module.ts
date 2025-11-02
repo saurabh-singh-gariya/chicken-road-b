@@ -17,6 +17,7 @@ import { ProvablyFairService } from './provably-fair.service';
     WalletModule,
     TransactionModule,
     UserModule,
+    RedisModule,
   ],
   providers: [GameService, GameGateway, ProvablyFairService],
   exports: [GameService, GameGateway, ProvablyFairService],

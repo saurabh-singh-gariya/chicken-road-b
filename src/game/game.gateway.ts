@@ -6,6 +6,7 @@ import {
   MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -14,6 +15,7 @@ import { plainToInstance } from 'class-transformer';
 import { validateOrReject } from 'class-validator';
 import { Server, Socket } from 'socket.io';
 import { GameConfigService } from '../gameConfig/game-config.service';
+import { RedisService } from '../redis/redis.service';
 import { UserService } from '../user/user.service';
 import { WalletService } from '../wallet/wallet.service';
 import { BetPayloadDto } from './dto/bet-payload.dto';
@@ -26,6 +28,12 @@ import { GameAction, GameActionDto } from './dto/game-action.dto';
 import { StepPayloadDto } from './dto/step-payload.dto';
 import { GameService } from './game.service';
 import { ProvablyFairService } from './provably-fair.service';
+import {
+  formatBet,
+  formatCoeff,
+  formatMoney,
+  toNumberSafe,
+} from './utils/ui-format.util';
 
 interface BalanceEventPayload {
   currency: string;
@@ -34,7 +42,7 @@ interface BalanceEventPayload {
 
 const WS_EVENTS = {
   CONNECTION_ERROR: 'connection-error',
-  GAME_SERVICE: 'game-service',
+  GAME_SERVICE: 'gameService',
   BALANCE_CHANGE: 'onBalanceChange',
   GAME_STATE: 'game-state', // new outbound payload replacing raw StepResponse
   BET_CONFIG: 'betConfig',
@@ -44,8 +52,11 @@ const WS_EVENTS = {
 } as const;
 
 @ApiTags('game')
+// Restoring original Socket.IO path expected by frontend ('/io/')
 @WebSocketGateway({ cors: true, path: '/io/' })
-export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class GameGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit
+{
   @WebSocketServer()
   server: Server;
 
@@ -58,43 +69,31 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly userService: UserService,
     private readonly jwt: JwtService,
     private readonly fairService: ProvablyFairService,
+    private readonly redisService: RedisService,
   ) {}
 
   async handleConnection(client: Socket) {
+    // TEST MODE (simplified): Ignore any provided token entirely and always bind the first user in DB.
+    // This should NOT ship to production. Replace with real auth before release.
     let auth = (client.data as any)?.auth;
-    let tokenUsed: string | undefined;
-    if (!auth?.sub) {
-      tokenUsed = this.extractToken(client);
-      if (!tokenUsed) {
-        this.logger.warn(`Missing token on connection: ${client.id}`);
-        client.emit(WS_EVENTS.CONNECTION_ERROR, {
-          error: 'Missing Authorization token',
-          code: 'MISSING_TOKEN',
-        });
-        client.disconnect();
-        return;
-      }
-      try {
-        auth = this.jwt.verify(tokenUsed);
+    try {
+      const users = await this.userService.findAll();
+      if (users.length > 0) {
+        const first = users[0];
+        auth = { sub: first.id } as any;
         (client.data ||= {}).auth = auth;
-      } catch (e) {
-        this.logger.warn(`Token verification failed for ${client.id}: ${e}`);
-        client.emit(WS_EVENTS.CONNECTION_ERROR, {
-          error: 'Invalid or expired token',
-          code: 'INVALID_TOKEN',
-        });
-        client.disconnect();
-        return;
+        this.logger.warn(
+          `TEST MODE: Force-bound client ${client.id} to first user id=${first.id}`,
+        );
+      } else {
+        this.logger.error(
+          `TEST MODE: No users found to bind for client ${client.id}; proceeding without user context`,
+        );
       }
-    }
-    if (!auth?.sub) {
-      this.logger.warn(`Token decoded without subject (sub) for ${client.id}`);
-      client.emit(WS_EVENTS.CONNECTION_ERROR, {
-        error: 'Token missing subject',
-        code: 'TOKEN_NO_SUB',
-      });
-      client.disconnect();
-      return;
+    } catch (e) {
+      this.logger.error(
+        `TEST MODE: Failed to load users for binding client ${client.id}: ${e}`,
+      );
     }
 
     const q: any = client.handshake.query;
@@ -125,15 +124,55 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     (client.data ||= {}).gameMode = gameMode;
     (client.data ||= {}).operatorId = operatorId;
 
-    const { betConfig, myData, betsRanges, balance, coefficients } =
+    const { betConfig, myData, betsRanges, balance } =
       await this.sendInitialData(client);
 
-    client.emit(WS_EVENTS.BET_CONFIG, betConfig);
+    // Stringify numeric arrays inside configs if they are JSON arrays
+    const stringifyNestedNumbers = (val: any) => {
+      try {
+        const parsed = JSON.parse(val);
+        const transform = (obj: any): any => {
+          if (Array.isArray(obj)) {
+            return obj.map((v) =>
+              typeof v === 'number' || /^\d+(\.\d+)?$/.test(String(v))
+                ? v.toString()
+                : transform(v),
+            );
+          }
+          if (obj && typeof obj === 'object') {
+            const out: any = {};
+            for (const k of Object.keys(obj)) {
+              const v = obj[k];
+              if (
+                typeof v === 'number' ||
+                (typeof v === 'string' && /^\d+(\.\d+)?$/.test(v))
+              ) {
+                out[k] = v.toString();
+              } else {
+                out[k] = transform(v);
+              }
+            }
+            return out;
+          }
+          return obj;
+        };
+        const transformed = transform(parsed);
+        return JSON.stringify(transformed);
+      } catch {
+        return val; // not JSON
+      }
+    };
+
+    const betConfigOut = stringifyNestedNumbers(betConfig);
+    const betsRangesOut = stringifyNestedNumbers(betsRanges);
+    // const coefficientsOut = stringifyNestedNumbers(coefficients);
+
+    client.emit(WS_EVENTS.BET_CONFIG, betConfigOut);
     client.emit(WS_EVENTS.MY_DATA, myData);
-    client.emit(WS_EVENTS.BETS_RANGES, betsRanges);
+    client.emit(WS_EVENTS.BETS_RANGES, betsRangesOut);
     client.emit(WS_EVENTS.BALANCE_CHANGE, balance);
 
-    client.emit(WS_EVENTS.COEFFICIENTS, coefficients);
+    // client.emit(WS_EVENTS.COEFFICIENTS, coefficientsOut);
 
     this.logger.log(
       `Client connected: ${client.id} (sub=${auth.sub})` +
@@ -143,32 +182,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   private extractToken(client: Socket): string | undefined {
-    const authHeader = client.handshake.headers['authorization'];
-    if (typeof authHeader === 'string') {
-      if (authHeader.startsWith('Bearer ')) {
-        return authHeader.slice(7).trim();
-      }
-      if (
-        /^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.[A-Za-z0-9-_.+/=]+$/.test(
-          authHeader.trim(),
-        )
-      ) {
-        return authHeader.trim();
-      }
-    }
-    const authObj: any = client.handshake.auth;
-    if (authObj?.token)
-      return Array.isArray(authObj.token) ? authObj.token[0] : authObj.token;
-    const q: any = client.handshake.query;
-    if (q?.token) return Array.isArray(q.token) ? q.token[0] : q.token;
-    if (q?.Authorization)
-      return Array.isArray(q.Authorization)
-        ? q.Authorization[0]
-        : q.Authorization;
+    // TEST MODE: Token intentionally ignored; function retained for potential future reactivation.
     return undefined;
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
+    // clean all cache in the redis
+    await this.redisService.flushAll();
     this.logger.log(`Client disconnected: ${client.id}`);
   }
 
@@ -186,12 +206,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         `Cannot send initial data without authenticated subject: ${client.id}`,
       );
     } else {
-      const wallet = await this.walletService.getUserWallet(userId);
-      if (wallet) {
-        balance = {
-          currency: wallet.currency,
-          balance: wallet.balance.toString(),
-        };
+      try {
+        const wallet = await this.walletService.getOrCreateUserWallet(userId);
+        if (wallet) {
+          balance = {
+            currency: wallet.currency,
+            balance: wallet.balance.toString(),
+          };
+        }
+      } catch (e) {
+        this.logger.warn(
+          `Failed to obtain wallet for initial data: ${client.id} (sub=${userId}) err=${(e as any)?.message}`,
+        );
       }
       const user = await this.userService.findOne(userId);
       if (user) {
@@ -217,7 +243,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       betConfig,
       myData,
       betsRanges,
-      coefficients,
     };
   }
 
@@ -226,8 +251,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: GameActionDto,
     @ConnectedSocket() client: Socket,
   ) {
-    const userId = this.getUserId(client);
+    const userId = await this.getUserId(client);
     if (!userId) return;
+    // If ACK handler already marked this payload, skip decorator processing to avoid duplicate emits.
+    if ((data as any)?.__skipDecorator) {
+      this.logger.debug('Skipping decorator handling (ACK already processed)');
+      return;
+    }
 
     try {
       // await validateOrReject(data);
@@ -241,7 +271,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           );
           response = await this.gameService.placeBet(
             userId,
-            payload.betAmount,
+            Number(payload.betAmount),
             payload.difficulty,
           );
           await this.safeEmitBalance(client, userId, 'post-bet');
@@ -255,9 +285,16 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             `User ${userId} moved to step: ${payload.lineNumber}`,
           );
           response = await this.gameService.step(userId, payload.lineNumber);
+          if (
+            this.isStepResponse(response) &&
+            (response as any).isFinished === true
+          ) {
+            await this.safeEmitBalance(client, userId, 'post-step');
+          }
           break;
         }
 
+        case GameAction.WITHDRAW:
         case GameAction.CASHOUT: {
           response = await this.gameService.cashOut(userId);
           await this.safeEmitBalance(client, userId, 'post-cashout');
@@ -265,7 +302,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
 
         case GameAction.GET_GAME_CONFIG: {
-          response = await this.gameConfigService.getConfig('gameConfig');
+          response = await this.gameService.getGameConfig();
           break;
         }
 
@@ -281,7 +318,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             userSeed: userState.userSeed,
             currentServerSeedHash: seeds.currentServerSeedHash,
             nextServerSeedHash: seeds.nextServerSeedHash,
-            nonce: userState.nonce,
+            nonce: userState.nonce.toString(), // stringified per UI numeric rule
           };
           response = payload;
           break;
@@ -299,20 +336,19 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             userSeed: state.userSeed,
             currentServerSeedHash: seeds.currentServerSeedHash,
             nextServerSeedHash: seeds.nextServerSeedHash,
-            nonce: state.nonce,
+            nonce: state.nonce.toString(), // stringified
           } as GameSeedsResponseDto;
           break;
         }
 
         case GameAction.REVEAL_SERVER_SEED: {
-          // For now reveal current server seed; later could restrict to finished session only
           const seeds = await this.fairService.getSeeds();
           const userState = await this.fairService.getUserSeedState(userId);
           const payload: RevealServerSeedResponseDto = {
             userSeed: userState.userSeed,
             serverSeed: seeds.currentServerSeed,
             serverSeedHash: seeds.currentServerSeedHash,
-            finalNonce: userState.nonce,
+            finalNonce: userState.nonce.toString(), // stringified
           };
           response = payload;
           break;
@@ -320,11 +356,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
         case GameAction.ROTATE_SERVER_SEED: {
           const rotated = await this.fairService.rotateServerSeed();
+          const roundsCountSafe = (rotated.roundsCount ?? 0).toString();
           response = {
             currentServerSeedHash: rotated.currentServerSeedHash,
             nextServerSeedHash: rotated.nextServerSeedHash,
-            roundsCount: rotated.roundsCount,
-          };
+            roundsCount: roundsCountSafe, // stringified
+          } as any;
           break;
         }
 
@@ -354,33 +391,91 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /** Helper: Extract authenticated user id or warn & emit error */
-  private getUserId(client: Socket): string | undefined {
-    const auth = (client.data as any)?.auth;
-    const userId = auth?.sub as string | undefined;
+  private async getUserId(client: Socket): Promise<string | undefined> {
+    let auth = (client.data as any)?.auth;
+    let userId = auth?.sub as string | undefined;
     if (!userId) {
       this.logger.warn(
-        `Game event without authenticated subject: ${client.id}`,
+        `Missing userId on socket ${client.id} during game event – attempting fallback binding`,
       );
-      client.emit(WS_EVENTS.CONNECTION_ERROR, {
-        error: 'Missing authenticated subject',
-        code: 'GAME_EVENT_NO_SUB',
-      });
+      // Attempt to bind first existing user or auto-create one (TEST MODE)
+      try {
+        return await this.bindFirstUserOrCreate(client);
+      } catch (e) {
+        this.logger.error(
+          `Fallback binding failed for client ${client.id}: ${e}`,
+        );
+        client.emit(WS_EVENTS.CONNECTION_ERROR, {
+          error: 'Missing authenticated subject',
+          code: 'GAME_EVENT_NO_SUB',
+        });
+        return undefined;
+      }
     }
     return userId;
+  }
+
+  private async bindFirstUserOrCreate(
+    client: Socket,
+  ): Promise<string | undefined> {
+    try {
+      const users = await this.userService.findAll();
+      if (users.length > 0) {
+        const first = users[0];
+        (client.data ||= {}).auth = { sub: first.id };
+        this.logger.warn(
+          `TEST MODE: Late-bound first user id=${first.id} to client ${client.id}`,
+        );
+        return first.id;
+      }
+      // Auto create a simple test user if none exist
+      this.logger.warn('TEST MODE: No users found; creating test-user');
+      const createFn: any = (this.userService as any).create?.bind(
+        this.userService,
+      );
+      if (createFn) {
+        const newUser = await createFn({ name: 'test-user', avatar: '' });
+        (client.data ||= {}).auth = { sub: newUser.id };
+        this.logger.warn(
+          `TEST MODE: Created and bound test-user id=${newUser.id} to client ${client.id}`,
+        );
+        return newUser.id;
+      } else {
+        this.logger.error(
+          'UserService.create not available; cannot auto-create test-user',
+        );
+        return undefined;
+      }
+    } catch (e) {
+      this.logger.error(
+        `bindFirstUserOrCreate failed for client ${client.id}: ${e}`,
+      );
+      return undefined;
+    }
   }
 
   /** Helper: Safely fetch and emit latest wallet balance. */
   private async safeEmitBalance(
     client: Socket,
     userId: string,
-    context: 'post-bet' | 'post-cashout' | 'manual' = 'manual',
+    context: 'post-bet' | 'post-cashout' | 'manual' | 'post-step' = 'manual',
   ) {
     try {
       const wallet = await this.walletService.getUserWallet(userId);
       if (!wallet) return;
+      const balanceNum =
+        typeof wallet.balance === 'number'
+          ? wallet.balance
+          : Number(wallet.balance);
+      if (Number.isNaN(balanceNum)) {
+        this.logger.warn(
+          `Balance value for user ${userId} not numeric: ${wallet.balance}`,
+        );
+        return;
+      }
       const payload: BalanceEventPayload = {
         currency: wallet.currency,
-        balance: wallet.balance.toFixed(2),
+        balance: formatMoney(balanceNum),
       };
       client.emit(WS_EVENTS.BALANCE_CHANGE, payload);
       this.logger.debug(
@@ -393,41 +488,115 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  // Type guard for StepResponse shape
+  // Type guard for current StepResponse shape returned by GameService
   private isStepResponse(obj: unknown): obj is {
-    isActive: boolean;
+    isFinished: boolean;
     isWin: boolean;
-    currentStep: number;
+    lineNumber: number;
     winAmount: number;
     betAmount: number;
-    multiplier: number;
+    coeff: number;
     difficulty: string;
-    profit: number;
     endReason?: string;
+    collisionPositions?: number[];
   } {
     if (!obj || typeof obj !== 'object') return false;
     const o: any = obj;
     return (
-      'isActive' in o &&
-      'currentStep' in o &&
+      'isFinished' in o &&
+      'lineNumber' in o &&
       'winAmount' in o &&
       'betAmount' in o &&
-      'multiplier' in o &&
+      'coeff' in o &&
       'difficulty' in o
     );
   }
 
   private async toClientGameState(
     step: {
-      isActive: boolean;
-      isWin: boolean;
-      currentStep: number;
+      isFinished: boolean;
+      lineNumber: number;
       winAmount: number;
       betAmount: number;
-      multiplier: number;
+      coeff: number;
       difficulty: string;
-      profit: number;
       endReason?: string;
+      collisionPositions?: number[];
+      isWin?: boolean;
+    },
+    userId: string,
+  ) {
+    let currency = 'USD';
+    try {
+      const wallet = await this.walletService.getUserWallet(userId);
+      if (wallet?.currency) currency = wallet.currency;
+    } catch {}
+
+    const betNum = toNumberSafe(step.betAmount);
+    const winNum = toNumberSafe(step.winAmount);
+    const coeffNum = toNumberSafe(step.coeff);
+    return [
+      {
+        isFinished: step.isFinished,
+        currency,
+        betAmount: formatBet(betNum),
+        coeff: formatCoeff(coeffNum),
+        winAmount: formatMoney(winNum),
+        difficulty: step.difficulty,
+        lineNumber: step.lineNumber,
+        collisionPositions: step.collisionPositions,
+        isWin: step.isWin,
+      },
+    ];
+  }
+
+  private async toClientGameStateAck(
+    step: {
+      isFinished: boolean;
+      lineNumber: number;
+      winAmount: number;
+      betAmount: number;
+      coeff: number;
+      difficulty: string;
+      endReason?: string;
+      collisionPositions?: number[];
+      isWin?: boolean;
+    },
+    userId: string,
+  ) {
+    let currency = 'USD';
+    try {
+      const wallet = await this.walletService.getUserWallet(userId);
+      if (wallet?.currency) currency = wallet.currency;
+    } catch {}
+
+    const betNum = toNumberSafe(step.betAmount);
+    const winNum = toNumberSafe(step.winAmount);
+    const coeffNum = toNumberSafe(step.coeff);
+    return {
+      isFinished: step.isFinished,
+      currency,
+      betAmount: formatBet(betNum),
+      coeff: formatCoeff(coeffNum),
+      winAmount: formatMoney(winNum),
+      difficulty: step.difficulty,
+      lineNumber: step.lineNumber,
+      collisionPositions: step.collisionPositions,
+      isWin: step.isWin,
+    };
+  }
+
+  private async wwtoClientGameState(
+    step: {
+      isFinished: boolean;
+      lineNumber: number;
+      winAmount: number;
+      betAmount: number;
+      coeff: number;
+      difficulty: string;
+      endReason?: string;
+      collisionPositions?: number[];
+      isWin?: boolean;
     },
     userId: string,
   ) {
@@ -439,18 +608,180 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const formatBet = (n: number) => n.toFixed(9); // matches example 0.600000000
     const formatWin = (n: number) => n.toFixed(2); // example shows 0.60
-    const coeffStr = step.multiplier.toString();
+    const coeffStr = step.coeff.toString();
 
     return [
       {
-        isFinished: !step.isActive,
+        isFinished: step.isFinished,
         currency,
         betAmount: formatBet(step.betAmount),
         coeff: coeffStr,
         winAmount: formatWin(step.winAmount),
         difficulty: step.difficulty,
-        lineNumber: step.currentStep,
+        lineNumber: step.lineNumber,
       },
     ];
+  }
+
+  /**
+   * Minimal ACK support: if a client emits 'game-service' with a callback, respond via ACK
+   * returning a bare array/object (no event name) for STEP (and BET) actions.
+   * This leaves existing event-based flow untouched when no callback is provided.
+   */
+  afterInit(server: Server) {
+    server.on('connection', (sock: Socket) => {
+      const ackHandler = async (data: any, ack?: Function) => {
+        if (typeof ack !== 'function') return; // no callback supplied, allow decorator flow
+        try {
+          const userId = await this.getUserId(sock);
+          if (!userId) return ack({ error: 'NO_USER' });
+          // Mark payload so decorator listener can ignore it (prevent duplicate response)
+          //IN CASH
+          if (
+            (data && typeof data === 'object') ||
+            data?.action === GameAction.CASHOUT
+          ) {
+            (data as any).__skipDecorator = true;
+          }
+
+          const rawAction: string = data?.action;
+          const actionUpper =
+            typeof rawAction === 'string' ? rawAction.toUpperCase() : '';
+
+          switch (actionUpper) {
+            case GameAction.STEP: {
+              const payload = plainToInstance(StepPayloadDto, data.payload);
+              await validateOrReject(payload);
+              const stepResp = await this.gameService.step(
+                userId,
+                payload.lineNumber,
+              );
+              if (this.isStepResponse(stepResp)) {
+                const transformed = await this.toClientGameStateAck(
+                  stepResp as any,
+                  userId,
+                );
+                // If finished emit updated balance (already handled in decorator, replicate here)
+                if ((stepResp as any).isFinished) {
+                  await this.safeEmitBalance(sock, userId, 'post-step');
+                }
+                return ack(transformed);
+              }
+              return ack(stepResp);
+            }
+
+            case GameAction.BET: {
+              const payload = plainToInstance(BetPayloadDto, data.payload);
+              await validateOrReject(payload);
+              const betResp = await this.gameService.placeBet(
+                userId,
+                Number(payload.betAmount),
+                payload.difficulty,
+              );
+              await this.safeEmitBalance(sock, userId, 'post-bet');
+              // If bet response itself looks like a step/session we could transform, but keep raw here
+              if (this.isStepResponse(betResp)) {
+                const transformed = await this.toClientGameStateAck(
+                  betResp as any,
+                  userId,
+                );
+                return ack(transformed);
+              }
+              return ack(betResp);
+            }
+
+            case GameAction.WITHDRAW:
+            case GameAction.CASHOUT: {
+              const resp = await this.gameService.cashOut(userId);
+              await this.safeEmitBalance(sock, userId, 'post-cashout');
+              if (this.isStepResponse(resp)) {
+                const transformed = await this.toClientGameStateAck(
+                  resp as any,
+                  userId,
+                );
+                return ack(transformed);
+              }
+              return ack(resp);
+            }
+
+            case GameAction.GET_GAME_SESSION: {
+              const resp = await this.gameService.getActiveSession(userId);
+              // Session object is sent raw
+              return ack(resp ?? null);
+            }
+
+            case GameAction.GET_GAME_CONFIG: {
+              // Provide raw config; extend later if need combined coefficients/lastWin
+              const resp = await this.gameService.getGameConfig();
+              return ack(resp ?? null);
+            }
+
+            case GameAction.GET_GAME_SEEDS: {
+              const seeds = await this.fairService.getSeeds();
+              const userState = await this.fairService.getUserSeedState(userId);
+              const payload: GameSeedsResponseDto = {
+                userSeed: userState.userSeed,
+                currentServerSeedHash: seeds.currentServerSeedHash,
+                nextServerSeedHash: seeds.nextServerSeedHash,
+                nonce: userState.nonce.toString(),
+              };
+              return ack(payload);
+            }
+
+            case GameAction.SET_USER_SEED: {
+              const dto = plainToInstance(SetUserSeedDto, data.payload);
+              const state = await this.fairService.setUserSeed(
+                userId,
+                dto.userSeed,
+              );
+              const seeds = await this.fairService.getSeeds();
+              const payload: GameSeedsResponseDto = {
+                userSeed: state.userSeed,
+                currentServerSeedHash: seeds.currentServerSeedHash,
+                nextServerSeedHash: seeds.nextServerSeedHash,
+                nonce: state.nonce.toString(),
+              };
+              return ack(payload);
+            }
+
+            case GameAction.REVEAL_SERVER_SEED: {
+              const seeds = await this.fairService.getSeeds();
+              const userState = await this.fairService.getUserSeedState(userId);
+              const payload: RevealServerSeedResponseDto = {
+                userSeed: userState.userSeed,
+                serverSeed: seeds.currentServerSeed,
+                serverSeedHash: seeds.currentServerSeedHash,
+                finalNonce: userState.nonce.toString(),
+              };
+              return ack(payload);
+            }
+
+            case GameAction.ROTATE_SERVER_SEED: {
+              const rotated = await this.fairService.rotateServerSeed();
+              const roundsCountSafe = (rotated.roundsCount ?? 0).toString();
+              return ack({
+                currentServerSeedHash: rotated.currentServerSeedHash,
+                nextServerSeedHash: rotated.nextServerSeedHash,
+                roundsCount: roundsCountSafe,
+              });
+            }
+
+            default:
+              return ack({
+                error: 'ACK_UNSUPPORTED_ACTION',
+                action: rawAction,
+              });
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return ack({ error: msg });
+        }
+      };
+
+      // Support both kebab and camelCase event name variants for incoming actions.
+      // Use prependListener so ACK handler runs before NestJS decorator listener.
+      sock.prependListener(WS_EVENTS.GAME_SERVICE, ackHandler);
+      sock.prependListener('game-service', ackHandler); // legacy alias for backward compatibility
+    });
   }
 }

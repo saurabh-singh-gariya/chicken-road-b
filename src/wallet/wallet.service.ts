@@ -72,18 +72,12 @@ export class WalletService {
    * Safe for concurrent calls due to upsert-like retry.
    */
   async getOrCreateUserWallet(userId: string): Promise<Wallet> {
-    const cacheKey = this.getCacheKey(userId);
-    // Try cache first
-    const cachedWallet = await this.redisService.get<Wallet>(cacheKey);
-    if (cachedWallet) return cachedWallet;
-
     // Try database
     let wallet = await this.walletRepository.findOne({
       where: { user: { id: userId } },
       relations: ['user'],
     });
     if (wallet) {
-      await this.redisService.set(cacheKey, wallet);
       return wallet;
     }
 
@@ -119,7 +113,6 @@ export class WalletService {
         currency: 'USD',
       });
       wallet = await this.walletRepository.save(wallet);
-      await this.redisService.set(cacheKey, wallet);
       this.logger.log(`Created new wallet for user ${userId}`);
       return wallet;
     } catch (e: any) {
@@ -134,7 +127,6 @@ export class WalletService {
       if (!wallet) {
         throw new Error(`Failed to create wallet for user ${userId}`);
       }
-      await this.redisService.set(cacheKey, wallet);
       return wallet;
     }
   }
@@ -145,9 +137,22 @@ export class WalletService {
     }
     const wallet = await this.getOrCreateUserWallet(userId);
 
-    wallet.balance += amount;
-    await this.walletRepository.save(wallet);
-    await this.clearCache(userId);
+    //wallet balance is string due to decimal type; convert to number
+    //then add amount and save
+    let balance = parseFloat(wallet.balance.toString());
+    balance += amount;
+    wallet.balance = balance;
+
+    try {
+      await this.walletRepository.save(wallet);
+      await this.clearCache(userId);
+    } catch (error) {
+      this.logger.error(
+        `Error depositing to wallet for user ${userId}: ${error.message}`,
+        error.stack,
+      );
+      throw new Error(`Could not deposit to wallet for user ${userId}`);
+    }
   }
 
   async withdrawFromWallet(userId: string, amount: number): Promise<void> {

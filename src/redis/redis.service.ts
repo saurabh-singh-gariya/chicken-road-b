@@ -46,4 +46,15 @@ export class RedisService {
       throw error;
     }
   }
+
+  //DELETE ALL THE KEYS IN REDIS
+  async flushAll(): Promise<void> {
+    try {
+      await this.redisClient.flushall();
+      this.logger.log(`All keys flushed from Redis`);
+    } catch (error) {
+      this.logger.error(`Failed to flush all keys from Redis`, error);
+      throw error;
+    }
+  }
 }

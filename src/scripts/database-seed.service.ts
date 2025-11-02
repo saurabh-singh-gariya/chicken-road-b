@@ -2,6 +2,9 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GameConfig } from '../entities/game-config.entity';
+import { GameHistory } from '../entities/game-history.entity';
+import { GameSession } from '../entities/game-session.entity';
+import { TransactionHistory } from '../entities/transaction-history.entity';
 import { User } from '../entities/User.entity';
 import { Wallet } from '../entities/Wallet.entity';
 
@@ -21,6 +24,12 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
     private readonly cfgRepo: Repository<GameConfig>,
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(Wallet) private readonly walletRepo: Repository<Wallet>,
+    @InjectRepository(GameSession)
+    private readonly sessionRepo: Repository<GameSession>,
+    @InjectRepository(GameHistory)
+    private readonly historyRepo: Repository<GameHistory>,
+    @InjectRepository(TransactionHistory)
+    private readonly txRepo: Repository<TransactionHistory>,
   ) {}
 
   async onApplicationBootstrap() {
@@ -29,6 +38,8 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
       return;
     }
     try {
+      // Always reset first for deterministic state
+      await this.resetData();
       await this.seedConfigs();
       await this.seedTestUserAndWallet();
     } catch (e) {
@@ -36,11 +47,55 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
     }
   }
 
+  /**
+   * Danger: wipes data from game-related tables to guarantee deterministic seed state.
+   * Order matters due to FK constraints.
+   */
+  private async resetData() {
+    this.logger.warn('Resetting database tables before seeding...');
+    // Delete in dependency order (children first)
+    // Using query builder delete to respect FKs without truncating sequences (ok for dev/testing)
+    try {
+      await this.txRepo.createQueryBuilder().delete().where('1=1').execute();
+      await this.historyRepo
+        .createQueryBuilder()
+        .delete()
+        .where('1=1')
+        .execute();
+      await this.sessionRepo
+        .createQueryBuilder()
+        .delete()
+        .where('1=1')
+        .execute();
+      await this.walletRepo
+        .createQueryBuilder()
+        .delete()
+        .where('1=1')
+        .execute();
+      await this.userRepo.createQueryBuilder().delete().where('1=1').execute();
+      await this.cfgRepo.createQueryBuilder().delete().where('1=1').execute();
+      this.logger.warn('Database reset complete.');
+    } catch (e) {
+      this.logger.error('Database reset failed', e as any);
+      throw e;
+    }
+  }
+
   private async seedConfigs() {
+    //add jwt.secret config
+    // key is jwt.secret
+    // and value is CHANGE_ME_DEV_SECRET but the value stored for this is string and the column type is JSON
+    const jwtSecretConfig: SeedConfigRow = {
+      key: 'jwt.secret',
+      value: {
+        secret: 'CHANGE_ME_DEV_SECRET',
+      },
+    };
     const desired: SeedConfigRow[] = [
       {
         key: 'coefficients',
         value: {
+          // Use uppercase keys to align with Difficulty enum and GameService lookups
           EASY: [
             '1.03',
             '1.07',
@@ -152,6 +207,7 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
           maxBet: 150.0,
           currency: 'USD',
           precision: 8,
+          // Uppercase for consistency with Difficulty enum
           difficulties: ['EASY', 'MEDIUM', 'HARD', 'DAREDEVIL'],
           defaultDifficulty: 'EASY',
         },
@@ -164,7 +220,9 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
         key: 'gameConfig',
         value: {
           totalColumns: 15,
-          hazards: { EASY: 1, MEDIUM: 2, HARD: 3, DAREDEVIL: 4 },
+          // Align hazards with hard-coded mapping in GameService (3,4,5,7)
+          // Note: GameService currently uses internal difficultyHazards; this is informational only.
+          hazards: { EASY: 3, MEDIUM: 4, HARD: 5, DAREDEVIL: 7 },
           supportsDifficulties: ['EASY', 'MEDIUM', 'HARD', 'DAREDEVIL'],
         },
       },
@@ -175,6 +233,10 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
           hashAlgorithm: 'sha256',
           nonceStart: 0,
         },
+      },
+      {
+        key: jwtSecretConfig.key,
+        value: jwtSecretConfig.value,
       },
     ];
 

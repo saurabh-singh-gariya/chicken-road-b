@@ -30,6 +30,7 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
   const port = configService.get<number>('app.port') || 3000;
+  // (Socket.IO gateway only; raw ws removed)
   await app.listen(port);
   const enableAuth = configService.get<boolean>('app.enableAuth');
   const envName = configService.get<string>('app.env');

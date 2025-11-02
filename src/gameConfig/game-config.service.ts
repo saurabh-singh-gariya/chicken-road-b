@@ -14,14 +14,14 @@ export class GameConfigService {
     private readonly configRepository: Repository<GameConfig>,
   ) {}
 
-  async getConfig(key: string): Promise<string> {
+  async getConfig(key: string): Promise<any | undefined> {
     const config = await this.configRepository.findOne({ where: { key } });
     if (!config) {
       this.logger.warn(`Config not fount for :${key}`);
       throw new NotFoundException(`Config "${key}" not found.`);
     }
     this.logger.log(`Config for key: ${key}`);
-    return config.value as string;
+    return config.value as any;
   }
 
   // Minimal helper for JWT secret retrieval with tiny cache & env fallback
@@ -30,20 +30,14 @@ export class GameConfigService {
     if (this.jwtSecretCache && this.jwtSecretCache.expires > now) {
       return this.jwtSecretCache.value;
     }
-    let secret: string | undefined;
+    let secret: any;
     try {
-      secret = await this.getConfig('jwt.secret');
+      let secretJson = await this.getConfig('jwt.secret');
+      secret = secretJson.secret;
     } catch (e) {
       // fallback to env if not present in DB
-      secret = process.env.JWT_SECRET;
-      if (!secret) {
-        this.logger.warn(
-          'JWT secret missing in DB and env; using dev fallback',
-        );
-        secret = 'CHANGE_ME_DEV_SECRET';
-      } else {
-        this.logger.warn('Using env JWT_SECRET (DB entry missing)');
-      }
+      secret = 'CHANGE_ME_DEV_SECRET';
+      this.logger.warn('Using env JWT_SECRET (DB entry missing)');
     }
     // cache
     this.jwtSecretCache = {

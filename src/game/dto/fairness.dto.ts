@@ -34,8 +34,11 @@ export class GameSeedsResponseDto {
   })
   nextServerSeedHash!: string;
 
-  @ApiProperty({ example: 3 })
-  nonce!: number;
+  @ApiProperty({
+    example: '3',
+    description: 'Nonce as string per UI numeric serialization rule',
+  })
+  nonce!: string;
 }
 
 export class RevealServerSeedResponseDto {
@@ -48,6 +51,9 @@ export class RevealServerSeedResponseDto {
   @ApiProperty({ example: 'ee7812710c3ab9b4960f0b304d3e68b8f216370bbb167d5' })
   serverSeedHash!: string;
 
-  @ApiProperty({ example: 7 })
-  finalNonce!: number;
+  @ApiProperty({
+    example: '7',
+    description: 'Final nonce as string per UI numeric serialization rule',
+  })
+  finalNonce!: string;
 }
