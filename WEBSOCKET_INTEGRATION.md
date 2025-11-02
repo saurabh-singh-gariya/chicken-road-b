@@ -16,7 +16,7 @@ ws://139.59.57.153/io/?gameMode=<DIFFICULTY>&operatorId=<OPERATOR_ID>&Authorizat
 
 Required Query Parameters:
 
-- `gameMode` (string; one of `EASY | MEDIUM | HARD | DAREDEVIL`) – initial difficulty context
+- `gameMode` (string; one of `ANY RANDOM STRING`) - can be any string value but must present
 - `operatorId` (string) – partner/operator identifier used for routing and configuration
   Optional Query Parameters:
 - `Authorization` (string) – currently NOT validated (TEST MODE). You may send any random non-empty string. In future this will become a real JWT.
@@ -29,7 +29,7 @@ Notes:
 ### Example Raw Upgrade (curl)
 
 ```
-curl 'ws://139.59.57.153/io/?gameMode=EASY&operatorId=operator1&Authorization=abc123&EIO=4&transport=websocket' \
+curl 'ws://139.59.57.153/io/?gameMode=chicken-road&operatorId=operator1&Authorization=abc123&EIO=4&transport=websocket' \
   -H 'Upgrade: websocket' -H 'Origin: http://localhost:5173' -H 'Connection: Upgrade' \
   -H 'Sec-WebSocket-Key: ...' -H 'Sec-WebSocket-Version: 13'
 ```
@@ -91,9 +91,9 @@ Server normalizes and uppercases incoming actions. Legacy synonyms like `CASHOUT
 
 | Action                 | Purpose                                             | Payload Required       | Notes                                                                     |
 | ---------------------- | --------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------- |
-| `BET`                  | Start a new session by placing a bet                | Yes (`BetPayloadDto`)  | Emits updated balance after acceptance. Returns session or game-state.    |
-| `STEP`                 | Advance one line/step in current session            | Yes (`StepPayloadDto`) | Returns transformed game-state array frame. May emit balance if finished. |
-| `WITHDRAW` / `CASHOUT` | Cash out current active session (if any)            | No                     | Returns result object or error; emits balance.                            |
+| `bet`                  | Start a new session by placing a bet                | Yes (`BetPayloadDto`)  | Emits updated balance after acceptance. Returns session or game-state.    |
+| `step`                 | Advance one line/step in current session            | Yes (`StepPayloadDto`) | Returns transformed game-state array frame. May emit balance if finished. |
+| `withdraw` / `CASHOUT` | Cash out current active session (if any)            | No                     | Returns result object or error; emits balance.                            |
 | `GET-GAME-SESSION`     | Fetch current active session state                  | No                     | Returns session object or `null`.                                         |
 | `GET-GAME-CONFIG`      | Fetch aggregate game configuration                  | No                     | Returns raw config object.                                                |
 | `GET-GAME-SEEDS`       | Fetch user seed + current/next server seed hashes   | No                     | Returns `GameSeedsResponseDto`.                                           |
