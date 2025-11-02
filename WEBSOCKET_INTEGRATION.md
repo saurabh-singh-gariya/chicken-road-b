@@ -40,7 +40,11 @@ curl 'ws://139.59.57.153/io/?gameMode=chicken-road&operatorId=operator1&Authoriz
 import { io } from 'socket.io-client';
 const socket = io('http://139.59.57.153', {
   path: '/io/',
-  query: { gameMode: 'EASY', operatorId: 'operator1', Authorization: 'xyz' },
+  query: {
+    gameMode: 'chicke-road',
+    operatorId: 'operator1',
+    Authorization: 'xyz',
+  },
   transports: ['websocket'],
 });
 ```
