@@ -1,787 +1,679 @@
-import { Logger } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { ApiTags } from '@nestjs/swagger';
-import {
-  ConnectedSocket,
-  MessageBody,
-  OnGatewayConnection,
-  OnGatewayDisconnect,
-  OnGatewayInit,
-  SubscribeMessage,
-  WebSocketGateway,
-  WebSocketServer,
-} from '@nestjs/websockets';
-import { plainToInstance } from 'class-transformer';
-import { validateOrReject } from 'class-validator';
-import { Server, Socket } from 'socket.io';
-import { GameConfigService } from '../gameConfig/game-config.service';
-import { RedisService } from '../redis/redis.service';
-import { UserService } from '../user/user.service';
-import { WalletService } from '../wallet/wallet.service';
-import { BetPayloadDto } from './dto/bet-payload.dto';
-import {
-  GameSeedsResponseDto,
-  RevealServerSeedResponseDto,
-  SetUserSeedDto,
-} from './dto/fairness.dto';
-import { GameAction, GameActionDto } from './dto/game-action.dto';
-import { StepPayloadDto } from './dto/step-payload.dto';
-import { GameService } from './game.service';
-import { ProvablyFairService } from './provably-fair.service';
-import {
-  formatBet,
-  formatCoeff,
-  formatMoney,
-  toNumberSafe,
-} from './utils/ui-format.util';
+// import { Logger } from '@nestjs/common';
+// import { JwtService } from '@nestjs/jwt';
+// import { ApiTags } from '@nestjs/swagger';
+// import {
+//   ConnectedSocket,
+//   MessageBody,
+//   OnGatewayConnection,
+//   OnGatewayDisconnect,
+//   OnGatewayInit,
+//   SubscribeMessage,
+//   WebSocketGateway,
+//   WebSocketServer,
+// } from '@nestjs/websockets';
+// import { plainToInstance } from 'class-transformer';
+// import { validateOrReject } from 'class-validator';
+// import { Server, Socket } from 'socket.io';
+// import { BetPayloadDto } from '../modules/gamePlay/DTO/bet-payload.dto';
+// import { StepPayloadDto } from '../modules/gamePlay/DTO/step-payload.dto';
+// import { GameAction, GameActionDto } from './dto/game-action.dto';
+// import { GameService } from './game.service';
+// import {
+//   formatBet,
+//   formatCoeff,
+//   formatMoney,
+//   toNumberSafe,
+// } from './utils/ui-format.util';
 
-interface BalanceEventPayload {
-  currency: string;
-  balance: string; // stringified for frontend consistency
-}
+// import { GameConfigService } from '../modules/gameConfig/game-config.service';
+// import { UserService } from '../modules/user/user.service';
 
-const WS_EVENTS = {
-  CONNECTION_ERROR: 'connection-error',
-  GAME_SERVICE: 'gameService',
-  BALANCE_CHANGE: 'onBalanceChange',
-  GAME_STATE: 'game-state', // new outbound payload replacing raw StepResponse
-  BET_CONFIG: 'betConfig',
-  MY_DATA: 'myData',
-  BETS_RANGES: 'betsRanges',
-  COEFFICIENTS: 'coefficients',
-} as const;
+// interface BalanceEventPayload {
+//   currency: string;
+//   balance: string; // stringified for frontend consistency
+// }
 
-@ApiTags('game')
-// Restoring original Socket.IO path expected by frontend ('/io/')
-@WebSocketGateway({ cors: true, path: '/io/' })
-export class GameGateway
-  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit
-{
-  @WebSocketServer()
-  server: Server;
+// const WS_EVENTS = {
+//   CONNECTION_ERROR: 'connection-error',
+//   GAME_SERVICE: 'gameService',
+//   BALANCE_CHANGE: 'onBalanceChange',
+//   GAME_STATE: 'game-state', // new outbound payload replacing raw StepResponse
+//   BET_CONFIG: 'betConfig',
+//   MY_DATA: 'myData',
+//   BETS_RANGES: 'betsRanges',
+//   COEFFICIENTS: 'coefficients',
+// } as const;
 
-  private logger = new Logger(GameGateway.name);
+// @ApiTags('game')
+// @WebSocketGateway({ cors: true, path: '/io/' })
+// export class GameGateway
+//   implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit
+// {
+//   @WebSocketServer()
+//   server: Server;
 
-  constructor(
-    private readonly gameService: GameService,
-    private readonly gameConfigService: GameConfigService,
-    private readonly walletService: WalletService,
-    private readonly userService: UserService,
-    private readonly jwt: JwtService,
-    private readonly fairService: ProvablyFairService,
-    private readonly redisService: RedisService,
-  ) {}
+//   wallet = {
+//     currency: 'USD',
+//     balance: '1000.00',
+//   };
 
-  async handleConnection(client: Socket) {
-    // TEST MODE (simplified): Ignore any provided token entirely and always bind the first user in DB.
-    // This should NOT ship to production. Replace with real auth before release.
-    let auth = (client.data as any)?.auth;
-    try {
-      const users = await this.userService.findAll();
-      if (users.length > 0) {
-        const first = users[0];
-        auth = { sub: first.id } as any;
-        (client.data ||= {}).auth = auth;
-        this.logger.warn(
-          `TEST MODE: Force-bound client ${client.id} to first user id=${first.id}`,
-        );
-      } else {
-        this.logger.error(
-          `TEST MODE: No users found to bind for client ${client.id}; proceeding without user context`,
-        );
-      }
-    } catch (e) {
-      this.logger.error(
-        `TEST MODE: Failed to load users for binding client ${client.id}: ${e}`,
-      );
-    }
+//   private logger = new Logger(GameGateway.name);
 
-    const q: any = client.handshake.query;
-    const gameMode = Array.isArray(q?.gameMode) ? q.gameMode[0] : q?.gameMode;
-    const operatorId = Array.isArray(q?.operatorId)
-      ? q.operatorId[0]
-      : q?.operatorId;
+//   constructor(
+//     private readonly gameService: GameService,
+//     private readonly gameConfigService: GameConfigService,
+//     private readonly userService: UserService,
+//     private readonly jwt: JwtService,
+//   ) {}
 
-    if (!gameMode) {
-      this.logger.warn(`Missing gameMode for ${client.id}`);
-      client.emit(WS_EVENTS.CONNECTION_ERROR, {
-        error: 'Missing gameMode query parameter',
-        code: 'MISSING_GAMEMODE',
-      });
-      client.disconnect();
-      return;
-    }
-    if (!operatorId) {
-      this.logger.warn(`Missing operatorId for ${client.id}`);
-      client.emit('connection-error', {
-        error: 'Missing operatorId query parameter',
-        code: 'MISSING_OPERATOR_ID',
-      });
-      client.disconnect();
-      return;
-    }
+//   async handleConnection(client: Socket) {
+//     // TEST MODE (simplified): Ignore any provided token entirely and always bind the first user in DB.
+//     // This should NOT ship to production. Replace with real auth before release.
+//     let auth = (client.data as any)?.auth;
+//     try {
+//       const users = await this.userService.findAll();
+//       if (users.length > 0) {
+//         const first = users[0];
+//         auth = { sub: first.userId } as any;
+//         (client.data ||= {}).auth = auth;
+//         this.logger.warn(
+//           `TEST MODE: Force-bound client ${client.id} to first user id=${first.userId}`,
+//         );
+//       } else {
+//         this.logger.error(
+//           `TEST MODE: No users found to bind for client ${client.id}; proceeding without user context`,
+//         );
+//       }
+//     } catch (e) {
+//       this.logger.error(
+//         `TEST MODE: Failed to load users for binding client ${client.id}: ${e}`,
+//       );
+//     }
 
-    (client.data ||= {}).gameMode = gameMode;
-    (client.data ||= {}).operatorId = operatorId;
+//     const q: any = client.handshake.query;
+//     const gameMode = Array.isArray(q?.gameMode) ? q.gameMode[0] : q?.gameMode;
+//     const operatorId = Array.isArray(q?.operatorId)
+//       ? q.operatorId[0]
+//       : q?.operatorId;
 
-    const { betConfig, myData, betsRanges, balance } =
-      await this.sendInitialData(client);
+//     if (!gameMode) {
+//       this.logger.warn(`Missing gameMode for ${client.id}`);
+//       client.emit(WS_EVENTS.CONNECTION_ERROR, {
+//         error: 'Missing gameMode query parameter',
+//         code: 'MISSING_GAMEMODE',
+//       });
+//       client.disconnect();
+//       return;
+//     }
+//     if (!operatorId) {
+//       this.logger.warn(`Missing operatorId for ${client.id}`);
+//       client.emit('connection-error', {
+//         error: 'Missing operatorId query parameter',
+//         code: 'MISSING_OPERATOR_ID',
+//       });
+//       client.disconnect();
+//       return;
+//     }
 
-    // Stringify numeric arrays inside configs if they are JSON arrays
-    const stringifyNestedNumbers = (val: any) => {
-      try {
-        const parsed = JSON.parse(val);
-        const transform = (obj: any): any => {
-          if (Array.isArray(obj)) {
-            return obj.map((v) =>
-              typeof v === 'number' || /^\d+(\.\d+)?$/.test(String(v))
-                ? v.toString()
-                : transform(v),
-            );
-          }
-          if (obj && typeof obj === 'object') {
-            const out: any = {};
-            for (const k of Object.keys(obj)) {
-              const v = obj[k];
-              if (
-                typeof v === 'number' ||
-                (typeof v === 'string' && /^\d+(\.\d+)?$/.test(v))
-              ) {
-                out[k] = v.toString();
-              } else {
-                out[k] = transform(v);
-              }
-            }
-            return out;
-          }
-          return obj;
-        };
-        const transformed = transform(parsed);
-        return JSON.stringify(transformed);
-      } catch {
-        return val; // not JSON
-      }
-    };
+//     (client.data ||= {}).gameMode = gameMode;
+//     (client.data ||= {}).operatorId = operatorId;
 
-    const betConfigOut = stringifyNestedNumbers(betConfig);
-    const betsRangesOut = stringifyNestedNumbers(betsRanges);
-    // const coefficientsOut = stringifyNestedNumbers(coefficients);
+//     const { betConfig, myData, betsRanges, balance } =
+//       await this.sendInitialData(client);
 
-    client.emit(WS_EVENTS.BET_CONFIG, betConfigOut);
-    client.emit(WS_EVENTS.MY_DATA, myData);
-    client.emit(WS_EVENTS.BETS_RANGES, betsRangesOut);
-    client.emit(WS_EVENTS.BALANCE_CHANGE, balance);
+//     // Stringify numeric arrays inside configs if they are JSON arrays
+//     const stringifyNestedNumbers = (val: any) => {
+//       try {
+//         const parsed = JSON.parse(val);
+//         const transform = (obj: any): any => {
+//           if (Array.isArray(obj)) {
+//             return obj.map((v) =>
+//               typeof v === 'number' || /^\d+(\.\d+)?$/.test(String(v))
+//                 ? v.toString()
+//                 : transform(v),
+//             );
+//           }
+//           if (obj && typeof obj === 'object') {
+//             const out: any = {};
+//             for (const k of Object.keys(obj)) {
+//               const v = obj[k];
+//               if (
+//                 typeof v === 'number' ||
+//                 (typeof v === 'string' && /^\d+(\.\d+)?$/.test(v))
+//               ) {
+//                 out[k] = v.toString();
+//               } else {
+//                 out[k] = transform(v);
+//               }
+//             }
+//             return out;
+//           }
+//           return obj;
+//         };
+//         const transformed = transform(parsed);
+//         return JSON.stringify(transformed);
+//       } catch {
+//         return val; // not JSON
+//       }
+//     };
 
-    // client.emit(WS_EVENTS.COEFFICIENTS, coefficientsOut);
+//     const betConfigOut = stringifyNestedNumbers(betConfig);
+//     const betsRangesOut = stringifyNestedNumbers(betsRanges);
+//     // const coefficientsOut = stringifyNestedNumbers(coefficients);
 
-    this.logger.log(
-      `Client connected: ${client.id} (sub=${auth.sub})` +
-        (gameMode ? ` gameMode=${gameMode}` : '') +
-        (operatorId ? ` operatorId=${operatorId}` : ''),
-    );
-  }
+//     client.emit(WS_EVENTS.BET_CONFIG, betConfigOut);
+//     client.emit(WS_EVENTS.MY_DATA, myData);
+//     client.emit(WS_EVENTS.BETS_RANGES, betsRangesOut);
+//     client.emit(WS_EVENTS.BALANCE_CHANGE, balance);
 
-  private extractToken(client: Socket): string | undefined {
-    // TEST MODE: Token intentionally ignored; function retained for potential future reactivation.
-    return undefined;
-  }
+//     // client.emit(WS_EVENTS.COEFFICIENTS, coefficientsOut);
 
-  async handleDisconnect(client: Socket) {
-    // clean all cache in the redis
-    await this.redisService.flushAll();
-    this.logger.log(`Client disconnected: ${client.id}`);
-  }
+//     this.logger.log(
+//       `Client connected: ${client.id} (sub=${auth.sub})` +
+//         (gameMode ? ` gameMode=${gameMode}` : '') +
+//         (operatorId ? ` operatorId=${operatorId}` : ''),
+//     );
+//   }
 
-  private async sendInitialData(client: Socket) {
-    const userId = (client.data as any)?.auth?.sub as string | undefined;
+//   private extractToken(client: Socket): string | undefined {
+//     // TEST MODE: Token intentionally ignored; function retained for potential future reactivation.
+//     return undefined;
+//   }
 
-    const betConfig = await this.gameConfigService.getConfig('betsConfig');
-    const betsRanges = await this.gameConfigService.getConfig('betsRanges');
-    const coefficients = await this.gameConfigService.getConfig('coefficients');
+//   async handleDisconnect(client: Socket) {
+//     this.logger.log(`Client disconnected: ${client.id}`);
+//   }
 
-    let balance = {};
-    let myData = {};
-    if (!userId) {
-      this.logger.warn(
-        `Cannot send initial data without authenticated subject: ${client.id}`,
-      );
-    } else {
-      try {
-        const wallet = await this.walletService.getOrCreateUserWallet(userId);
-        if (wallet) {
-          balance = {
-            currency: wallet.currency,
-            balance: wallet.balance.toString(),
-          };
-        }
-      } catch (e) {
-        this.logger.warn(
-          `Failed to obtain wallet for initial data: ${client.id} (sub=${userId}) err=${(e as any)?.message}`,
-        );
-      }
-      const user = await this.userService.findOne(userId);
-      if (user) {
-        myData = {
-          id: user.id,
-          name: user.name,
-          avatar: user.avatar,
-        };
-      } else {
-        this.logger.warn(
-          `User not found for initial data: ${client.id} (sub=${userId})`,
-        );
-        myData = {
-          id: userId,
-          name: 'Unknown',
-          avatar: '',
-        };
-      }
-    }
+//   private async sendInitialData(client: Socket) {
+//     const userId = (client.data as any)?.auth?.sub as string | undefined;
 
-    return {
-      balance,
-      betConfig,
-      myData,
-      betsRanges,
-    };
-  }
+//     const betConfig = await this.gameConfigService.getConfig('betsConfig');
+//     const betsRanges = await this.gameConfigService.getConfig('betsRanges');
+//     const coefficients = await this.gameConfigService.getConfig('coefficients');
 
-  @SubscribeMessage(WS_EVENTS.GAME_SERVICE)
-  async handleGameEvent(
-    @MessageBody() data: GameActionDto,
-    @ConnectedSocket() client: Socket,
-  ) {
-    const userId = await this.getUserId(client);
-    if (!userId) return;
-    // If ACK handler already marked this payload, skip decorator processing to avoid duplicate emits.
-    if ((data as any)?.__skipDecorator) {
-      this.logger.debug('Skipping decorator handling (ACK already processed)');
-      return;
-    }
+//     let balance = {};
+//     let myData = {};
+//     if (!userId) {
+//       this.logger.warn(
+//         `Cannot send initial data without authenticated subject: ${client.id}`,
+//       );
+//     } else {
+//       try {
+//         const wallet = this.wallet;
+//         if (wallet) {
+//           balance = {
+//             currency: wallet.currency,
+//             balance: wallet.balance.toString(),
+//           };
+//         }
+//       } catch (e) {
+//         this.logger.warn(
+//           `Failed to obtain wallet for initial data: ${client.id} (sub=${userId}) err=${(e as any)?.message}`,
+//         );
+//       }
+//       const user = await this.userService.findOne(userId, 'AGENT_ID');
+//       if (user) {
+//         myData = {
+//           id: user.userId,
+//           name: user.username,
+//           avatar: '',
+//         };
+//       } else {
+//         this.logger.warn(
+//           `User not found for initial data: ${client.id} (sub=${userId})`,
+//         );
+//         myData = {
+//           id: userId,
+//           name: 'Unknown',
+//           avatar: '',
+//         };
+//       }
+//     }
 
-    try {
-      // await validateOrReject(data);
-      let response: unknown;
-      switch (data.action) {
-        case GameAction.BET: {
-          const payload = plainToInstance(BetPayloadDto, data.payload);
-          await validateOrReject(payload);
-          this.logger.log(
-            `User ${userId} placed a bet: ${JSON.stringify(payload)} on difficulty ${payload.difficulty}`,
-          );
-          response = await this.gameService.placeBet(
-            userId,
-            Number(payload.betAmount),
-            payload.difficulty,
-          );
-          await this.safeEmitBalance(client, userId, 'post-bet');
-          break;
-        }
+//     return {
+//       balance,
+//       betConfig,
+//       myData,
+//       betsRanges,
+//     };
+//   }
 
-        case GameAction.STEP: {
-          const payload = plainToInstance(StepPayloadDto, data.payload);
-          await validateOrReject(payload);
-          this.logger.log(
-            `User ${userId} moved to step: ${payload.lineNumber}`,
-          );
-          response = await this.gameService.step(userId, payload.lineNumber);
-          if (
-            this.isStepResponse(response) &&
-            (response as any).isFinished === true
-          ) {
-            await this.safeEmitBalance(client, userId, 'post-step');
-          }
-          break;
-        }
+//   @SubscribeMessage(WS_EVENTS.GAME_SERVICE)
+//   async handleGameEvent(
+//     @MessageBody() data: GameActionDto,
+//     @ConnectedSocket() client: Socket,
+//   ) {
+//     const userId = await this.getUserId(client);
+//     if (!userId) return;
+//     // If ACK handler already marked this payload, skip decorator processing to avoid duplicate emits.
+//     if ((data as any)?.__skipDecorator) {
+//       this.logger.debug('Skipping decorator handling (ACK already processed)');
+//       return;
+//     }
 
-        case GameAction.WITHDRAW:
-        case GameAction.CASHOUT: {
-          response = await this.gameService.cashOut(userId);
-          await this.safeEmitBalance(client, userId, 'post-cashout');
-          break;
-        }
+//     try {
+//       // await validateOrReject(data);
+//       let response: unknown;
+//       switch (data.action) {
+//         case GameAction.BET: {
+//           const payload = plainToInstance(BetPayloadDto, data.payload);
+//           await validateOrReject(payload);
+//           this.logger.log(
+//             `User ${userId} placed a bet: ${JSON.stringify(payload)} on difficulty ${payload.difficulty}`,
+//           );
+//           response = await this.gameService.placeBet(
+//             userId,
+//             Number(payload.betAmount),
+//             payload.difficulty,
+//           );
+//           await this.safeEmitBalance(client, userId, 'post-bet');
+//           break;
+//         }
 
-        case GameAction.GET_GAME_CONFIG: {
-          response = await this.gameService.getGameConfig();
-          break;
-        }
+//         case GameAction.STEP: {
+//           const payload = plainToInstance(StepPayloadDto, data.payload);
+//           await validateOrReject(payload);
+//           this.logger.log(
+//             `User ${userId} moved to step: ${payload.lineNumber}`,
+//           );
+//           response = await this.gameService.step(userId, payload.lineNumber);
+//           if (
+//             this.isStepResponse(response) &&
+//             (response as any).isFinished === true
+//           ) {
+//             await this.safeEmitBalance(client, userId, 'post-step');
+//           }
+//           break;
+//         }
 
-        case GameAction.GET_GAME_SESSION: {
-          response = await this.gameService.getActiveSession(userId);
-          break;
-        }
+//         case GameAction.WITHDRAW:
+//         case GameAction.CASHOUT: {
+//           response = await this.gameService.cashOut(userId);
+//           await this.safeEmitBalance(client, userId, 'post-cashout');
+//           break;
+//         }
 
-        case GameAction.GET_GAME_SEEDS: {
-          const seeds = await this.fairService.getSeeds();
-          const userState = await this.fairService.getUserSeedState(userId);
-          const payload: GameSeedsResponseDto = {
-            userSeed: userState.userSeed,
-            currentServerSeedHash: seeds.currentServerSeedHash,
-            nextServerSeedHash: seeds.nextServerSeedHash,
-            nonce: userState.nonce.toString(), // stringified per UI numeric rule
-          };
-          response = payload;
-          break;
-        }
+//         case GameAction.GET_GAME_CONFIG: {
+//           response = await this.gameService.getGameConfig();
+//           break;
+//         }
 
-        case GameAction.SET_USER_SEED: {
-          const dto = plainToInstance(SetUserSeedDto, data.payload);
-          // optional validation can be added
-          const state = await this.fairService.setUserSeed(
-            userId,
-            dto.userSeed,
-          );
-          const seeds = await this.fairService.getSeeds();
-          response = {
-            userSeed: state.userSeed,
-            currentServerSeedHash: seeds.currentServerSeedHash,
-            nextServerSeedHash: seeds.nextServerSeedHash,
-            nonce: state.nonce.toString(), // stringified
-          } as GameSeedsResponseDto;
-          break;
-        }
+//         case GameAction.GET_GAME_SESSION: {
+//           response = await this.gameService.getActiveSession(userId);
+//           break;
+//         }
 
-        case GameAction.REVEAL_SERVER_SEED: {
-          const seeds = await this.fairService.getSeeds();
-          const userState = await this.fairService.getUserSeedState(userId);
-          const payload: RevealServerSeedResponseDto = {
-            userSeed: userState.userSeed,
-            serverSeed: seeds.currentServerSeed,
-            serverSeedHash: seeds.currentServerSeedHash,
-            finalNonce: userState.nonce.toString(), // stringified
-          };
-          response = payload;
-          break;
-        }
+//         case GameAction.GET_GAME_SEEDS: {
+//           response = {};
+//           break;
+//         }
+//         default:
+//           response = { error: 'Unknown action' };
+//           break;
+//       }
 
-        case GameAction.ROTATE_SERVER_SEED: {
-          const rotated = await this.fairService.rotateServerSeed();
-          const roundsCountSafe = (rotated.roundsCount ?? 0).toString();
-          response = {
-            currentServerSeedHash: rotated.currentServerSeedHash,
-            nextServerSeedHash: rotated.nextServerSeedHash,
-            roundsCount: roundsCountSafe, // stringified
-          } as any;
-          break;
-        }
+//       // Transform StepResponse / session responses into the required client shape if applicable
+//       if (this.isStepResponse(response)) {
+//         const transformed = await this.toClientGameState(
+//           response as any,
+//           userId,
+//         );
+//         client.emit(WS_EVENTS.GAME_STATE, transformed);
+//       } else {
+//         client.emit(WS_EVENTS.GAME_SERVICE, response);
+//       }
+//     } catch (err) {
+//       this.logger.error(`Validation failed: ${err}`);
+//       const errorMessage =
+//         typeof err === 'object' && err !== null && 'message' in err
+//           ? (err as { message: string }).message
+//           : String(err);
+//       client.emit(WS_EVENTS.GAME_SERVICE, { error: errorMessage });
+//     }
+//   }
 
-        default:
-          response = { error: 'Unknown action' };
-          break;
-      }
+//   /** Helper: Extract authenticated user id or warn & emit error */
+//   private async getUserId(client: Socket): Promise<string | undefined> {
+//     let auth = (client.data as any)?.auth;
+//     let userId = auth?.sub as string | undefined;
+//     if (!userId) {
+//       this.logger.warn(
+//         `Missing userId on socket ${client.id} during game event – attempting fallback binding`,
+//       );
+//       // Attempt to bind first existing user or auto-create one (TEST MODE)
+//       try {
+//         return await this.bindFirstUserOrCreate(client);
+//       } catch (e) {
+//         this.logger.error(
+//           `Fallback binding failed for client ${client.id}: ${e}`,
+//         );
+//         client.emit(WS_EVENTS.CONNECTION_ERROR, {
+//           error: 'Missing authenticated subject',
+//           code: 'GAME_EVENT_NO_SUB',
+//         });
+//         return undefined;
+//       }
+//     }
+//     return userId;
+//   }
 
-      // Transform StepResponse / session responses into the required client shape if applicable
-      if (this.isStepResponse(response)) {
-        const transformed = await this.toClientGameState(
-          response as any,
-          userId,
-        );
-        client.emit(WS_EVENTS.GAME_STATE, transformed);
-      } else {
-        client.emit(WS_EVENTS.GAME_SERVICE, response);
-      }
-    } catch (err) {
-      this.logger.error(`Validation failed: ${err}`);
-      const errorMessage =
-        typeof err === 'object' && err !== null && 'message' in err
-          ? (err as { message: string }).message
-          : String(err);
-      client.emit(WS_EVENTS.GAME_SERVICE, { error: errorMessage });
-    }
-  }
+//   private async bindFirstUserOrCreate(
+//     client: Socket,
+//   ): Promise<string | undefined> {
+//     try {
+//       const users = await this.userService.findAll();
+//       if (users.length > 0) {
+//         const first = users[0];
+//         (client.data ||= {}).auth = { sub: first.userId };
+//         this.logger.warn(
+//           `TEST MODE: Late-bound first user id=${first.id} to client ${client.id}`,
+//         );
+//         return first.id;
+//       }
+//       // Auto create a simple test user if none exist
+//       this.logger.warn('TEST MODE: No users found; creating test-user');
+//       const createFn: any = (this.userService as any).create?.bind(
+//         this.userService,
+//       );
+//       if (createFn) {
+//         const newUser = await createFn({ name: 'test-user', avatar: '' });
+//         (client.data ||= {}).auth = { sub: newUser.id };
+//         this.logger.warn(
+//           `TEST MODE: Created and bound test-user id=${newUser.id} to client ${client.id}`,
+//         );
+//         return newUser.id;
+//       } else {
+//         this.logger.error(
+//           'UserService.create not available; cannot auto-create test-user',
+//         );
+//         return undefined;
+//       }
+//     } catch (e) {
+//       this.logger.error(
+//         `bindFirstUserOrCreate failed for client ${client.id}: ${e}`,
+//       );
+//       return undefined;
+//     }
+//   }
 
-  /** Helper: Extract authenticated user id or warn & emit error */
-  private async getUserId(client: Socket): Promise<string | undefined> {
-    let auth = (client.data as any)?.auth;
-    let userId = auth?.sub as string | undefined;
-    if (!userId) {
-      this.logger.warn(
-        `Missing userId on socket ${client.id} during game event – attempting fallback binding`,
-      );
-      // Attempt to bind first existing user or auto-create one (TEST MODE)
-      try {
-        return await this.bindFirstUserOrCreate(client);
-      } catch (e) {
-        this.logger.error(
-          `Fallback binding failed for client ${client.id}: ${e}`,
-        );
-        client.emit(WS_EVENTS.CONNECTION_ERROR, {
-          error: 'Missing authenticated subject',
-          code: 'GAME_EVENT_NO_SUB',
-        });
-        return undefined;
-      }
-    }
-    return userId;
-  }
+//   /** Helper: Safely fetch and emit latest wallet balance. */
+//   private async safeEmitBalance(
+//     client: Socket,
+//     userId: string,
+//     context: 'post-bet' | 'post-cashout' | 'manual' | 'post-step' = 'manual',
+//   ) {
+//     try {
+//       const wallet = this.wallet;
+//       if (!wallet) return;
+//       const balanceNum =
+//         typeof wallet.balance === 'number'
+//           ? wallet.balance
+//           : Number(wallet.balance);
+//       if (Number.isNaN(balanceNum)) {
+//         this.logger.warn(
+//           `Balance value for user ${userId} not numeric: ${wallet.balance}`,
+//         );
+//         return;
+//       }
+//       const payload: BalanceEventPayload = {
+//         currency: wallet.currency,
+//         balance: formatMoney(balanceNum),
+//       };
+//       client.emit(WS_EVENTS.BALANCE_CHANGE, payload);
+//       this.logger.debug(
+//         `Emitted balance change (${context}) for user ${userId}: ${payload.balance}`,
+//       );
+//     } catch (e) {
+//       this.logger.warn(
+//         `Failed to emit balance (${context}) for user ${userId}: ${e}`,
+//       );
+//     }
+//   }
 
-  private async bindFirstUserOrCreate(
-    client: Socket,
-  ): Promise<string | undefined> {
-    try {
-      const users = await this.userService.findAll();
-      if (users.length > 0) {
-        const first = users[0];
-        (client.data ||= {}).auth = { sub: first.id };
-        this.logger.warn(
-          `TEST MODE: Late-bound first user id=${first.id} to client ${client.id}`,
-        );
-        return first.id;
-      }
-      // Auto create a simple test user if none exist
-      this.logger.warn('TEST MODE: No users found; creating test-user');
-      const createFn: any = (this.userService as any).create?.bind(
-        this.userService,
-      );
-      if (createFn) {
-        const newUser = await createFn({ name: 'test-user', avatar: '' });
-        (client.data ||= {}).auth = { sub: newUser.id };
-        this.logger.warn(
-          `TEST MODE: Created and bound test-user id=${newUser.id} to client ${client.id}`,
-        );
-        return newUser.id;
-      } else {
-        this.logger.error(
-          'UserService.create not available; cannot auto-create test-user',
-        );
-        return undefined;
-      }
-    } catch (e) {
-      this.logger.error(
-        `bindFirstUserOrCreate failed for client ${client.id}: ${e}`,
-      );
-      return undefined;
-    }
-  }
+//   // Type guard for current StepResponse shape returned by GameService
+//   private isStepResponse(obj: unknown): obj is {
+//     isFinished: boolean;
+//     isWin: boolean;
+//     lineNumber: number;
+//     winAmount: number;
+//     betAmount: number;
+//     coeff: number;
+//     difficulty: string;
+//     endReason?: string;
+//     collisionPositions?: number[];
+//   } {
+//     if (!obj || typeof obj !== 'object') return false;
+//     const o: any = obj;
+//     return (
+//       'isFinished' in o &&
+//       'lineNumber' in o &&
+//       'winAmount' in o &&
+//       'betAmount' in o &&
+//       'coeff' in o &&
+//       'difficulty' in o
+//     );
+//   }
 
-  /** Helper: Safely fetch and emit latest wallet balance. */
-  private async safeEmitBalance(
-    client: Socket,
-    userId: string,
-    context: 'post-bet' | 'post-cashout' | 'manual' | 'post-step' = 'manual',
-  ) {
-    try {
-      const wallet = await this.walletService.getUserWallet(userId);
-      if (!wallet) return;
-      const balanceNum =
-        typeof wallet.balance === 'number'
-          ? wallet.balance
-          : Number(wallet.balance);
-      if (Number.isNaN(balanceNum)) {
-        this.logger.warn(
-          `Balance value for user ${userId} not numeric: ${wallet.balance}`,
-        );
-        return;
-      }
-      const payload: BalanceEventPayload = {
-        currency: wallet.currency,
-        balance: formatMoney(balanceNum),
-      };
-      client.emit(WS_EVENTS.BALANCE_CHANGE, payload);
-      this.logger.debug(
-        `Emitted balance change (${context}) for user ${userId}: ${payload.balance}`,
-      );
-    } catch (e) {
-      this.logger.warn(
-        `Failed to emit balance (${context}) for user ${userId}: ${e}`,
-      );
-    }
-  }
+//   private async toClientGameState(
+//     step: {
+//       isFinished: boolean;
+//       lineNumber: number;
+//       winAmount: number;
+//       betAmount: number;
+//       coeff: number;
+//       difficulty: string;
+//       endReason?: string;
+//       collisionPositions?: number[];
+//       isWin?: boolean;
+//     },
+//     userId: string,
+//   ) {
+//     let currency = 'USD';
+//     try {
+//       const wallet = this.wallet;
+//       if (wallet?.currency) currency = wallet.currency;
+//     } catch {}
 
-  // Type guard for current StepResponse shape returned by GameService
-  private isStepResponse(obj: unknown): obj is {
-    isFinished: boolean;
-    isWin: boolean;
-    lineNumber: number;
-    winAmount: number;
-    betAmount: number;
-    coeff: number;
-    difficulty: string;
-    endReason?: string;
-    collisionPositions?: number[];
-  } {
-    if (!obj || typeof obj !== 'object') return false;
-    const o: any = obj;
-    return (
-      'isFinished' in o &&
-      'lineNumber' in o &&
-      'winAmount' in o &&
-      'betAmount' in o &&
-      'coeff' in o &&
-      'difficulty' in o
-    );
-  }
+//     const betNum = toNumberSafe(step.betAmount);
+//     const winNum = toNumberSafe(step.winAmount);
+//     const coeffNum = toNumberSafe(step.coeff);
+//     return [
+//       {
+//         isFinished: step.isFinished,
+//         currency,
+//         betAmount: formatBet(betNum),
+//         coeff: formatCoeff(coeffNum),
+//         winAmount: formatMoney(winNum),
+//         difficulty: step.difficulty,
+//         lineNumber: step.lineNumber,
+//         collisionPositions: step.collisionPositions,
+//         isWin: step.isWin,
+//       },
+//     ];
+//   }
 
-  private async toClientGameState(
-    step: {
-      isFinished: boolean;
-      lineNumber: number;
-      winAmount: number;
-      betAmount: number;
-      coeff: number;
-      difficulty: string;
-      endReason?: string;
-      collisionPositions?: number[];
-      isWin?: boolean;
-    },
-    userId: string,
-  ) {
-    let currency = 'USD';
-    try {
-      const wallet = await this.walletService.getUserWallet(userId);
-      if (wallet?.currency) currency = wallet.currency;
-    } catch {}
+//   private async toClientGameStateAck(
+//     step: {
+//       isFinished: boolean;
+//       lineNumber: number;
+//       winAmount: number;
+//       betAmount: number;
+//       coeff: number;
+//       difficulty: string;
+//       endReason?: string;
+//       collisionPositions?: number[];
+//       isWin?: boolean;
+//     },
+//     userId: string,
+//   ) {
+//     let currency = 'USD';
+//     try {
+//       const wallet = this.wallet;
+//       if (wallet?.currency) currency = wallet.currency;
+//     } catch {}
 
-    const betNum = toNumberSafe(step.betAmount);
-    const winNum = toNumberSafe(step.winAmount);
-    const coeffNum = toNumberSafe(step.coeff);
-    return [
-      {
-        isFinished: step.isFinished,
-        currency,
-        betAmount: formatBet(betNum),
-        coeff: formatCoeff(coeffNum),
-        winAmount: formatMoney(winNum),
-        difficulty: step.difficulty,
-        lineNumber: step.lineNumber,
-        collisionPositions: step.collisionPositions,
-        isWin: step.isWin,
-      },
-    ];
-  }
+//     const betNum = toNumberSafe(step.betAmount);
+//     const winNum = toNumberSafe(step.winAmount);
+//     const coeffNum = toNumberSafe(step.coeff);
+//     return {
+//       isFinished: step.isFinished,
+//       currency,
+//       betAmount: formatBet(betNum),
+//       coeff: formatCoeff(coeffNum),
+//       winAmount: formatMoney(winNum),
+//       difficulty: step.difficulty,
+//       lineNumber: step.lineNumber,
+//       collisionPositions: step.collisionPositions,
+//       isWin: step.isWin,
+//     };
+//   }
 
-  private async toClientGameStateAck(
-    step: {
-      isFinished: boolean;
-      lineNumber: number;
-      winAmount: number;
-      betAmount: number;
-      coeff: number;
-      difficulty: string;
-      endReason?: string;
-      collisionPositions?: number[];
-      isWin?: boolean;
-    },
-    userId: string,
-  ) {
-    let currency = 'USD';
-    try {
-      const wallet = await this.walletService.getUserWallet(userId);
-      if (wallet?.currency) currency = wallet.currency;
-    } catch {}
+//   private async wwtoClientGameState(
+//     step: {
+//       isFinished: boolean;
+//       lineNumber: number;
+//       winAmount: number;
+//       betAmount: number;
+//       coeff: number;
+//       difficulty: string;
+//       endReason?: string;
+//       collisionPositions?: number[];
+//       isWin?: boolean;
+//     },
+//     userId: string,
+//   ) {
+//     let currency = 'USD';
+//     try {
+//       const wallet = this.wallet;
+//       if (wallet?.currency) currency = wallet.currency;
+//     } catch {}
 
-    const betNum = toNumberSafe(step.betAmount);
-    const winNum = toNumberSafe(step.winAmount);
-    const coeffNum = toNumberSafe(step.coeff);
-    return {
-      isFinished: step.isFinished,
-      currency,
-      betAmount: formatBet(betNum),
-      coeff: formatCoeff(coeffNum),
-      winAmount: formatMoney(winNum),
-      difficulty: step.difficulty,
-      lineNumber: step.lineNumber,
-      collisionPositions: step.collisionPositions,
-      isWin: step.isWin,
-    };
-  }
+//     const formatBet = (n: number) => n.toFixed(9); // matches example 0.600000000
+//     const formatWin = (n: number) => n.toFixed(2); // example shows 0.60
+//     const coeffStr = step.coeff.toString();
 
-  private async wwtoClientGameState(
-    step: {
-      isFinished: boolean;
-      lineNumber: number;
-      winAmount: number;
-      betAmount: number;
-      coeff: number;
-      difficulty: string;
-      endReason?: string;
-      collisionPositions?: number[];
-      isWin?: boolean;
-    },
-    userId: string,
-  ) {
-    let currency = 'USD';
-    try {
-      const wallet = await this.walletService.getUserWallet(userId);
-      if (wallet?.currency) currency = wallet.currency;
-    } catch {}
+//     return [
+//       {
+//         isFinished: step.isFinished,
+//         currency,
+//         betAmount: formatBet(step.betAmount),
+//         coeff: coeffStr,
+//         winAmount: formatWin(step.winAmount),
+//         difficulty: step.difficulty,
+//         lineNumber: step.lineNumber,
+//       },
+//     ];
+//   }
 
-    const formatBet = (n: number) => n.toFixed(9); // matches example 0.600000000
-    const formatWin = (n: number) => n.toFixed(2); // example shows 0.60
-    const coeffStr = step.coeff.toString();
+//   /**
+//    * Minimal ACK support: if a client emits 'game-service' with a callback, respond via ACK
+//    * returning a bare array/object (no event name) for STEP (and BET) actions.
+//    * This leaves existing event-based flow untouched when no callback is provided.
+//    */
+//   afterInit(server: Server) {
+//     server.on('connection', (sock: Socket) => {
+//       const ackHandler = async (data: any, ack?: Function) => {
+//         if (typeof ack !== 'function') return; // no callback supplied, allow decorator flow
+//         try {
+//           const userId = await this.getUserId(sock);
+//           if (!userId) return ack({ error: 'NO_USER' });
+//           // Mark payload so decorator listener can ignore it (prevent duplicate response)
+//           //IN CASH
+//           if (
+//             (data && typeof data === 'object') ||
+//             data?.action === GameAction.CASHOUT
+//           ) {
+//             (data as any).__skipDecorator = true;
+//           }
 
-    return [
-      {
-        isFinished: step.isFinished,
-        currency,
-        betAmount: formatBet(step.betAmount),
-        coeff: coeffStr,
-        winAmount: formatWin(step.winAmount),
-        difficulty: step.difficulty,
-        lineNumber: step.lineNumber,
-      },
-    ];
-  }
+//           const rawAction: string = data?.action;
+//           const actionUpper =
+//             typeof rawAction === 'string' ? rawAction.toUpperCase() : '';
 
-  /**
-   * Minimal ACK support: if a client emits 'game-service' with a callback, respond via ACK
-   * returning a bare array/object (no event name) for STEP (and BET) actions.
-   * This leaves existing event-based flow untouched when no callback is provided.
-   */
-  afterInit(server: Server) {
-    server.on('connection', (sock: Socket) => {
-      const ackHandler = async (data: any, ack?: Function) => {
-        if (typeof ack !== 'function') return; // no callback supplied, allow decorator flow
-        try {
-          const userId = await this.getUserId(sock);
-          if (!userId) return ack({ error: 'NO_USER' });
-          // Mark payload so decorator listener can ignore it (prevent duplicate response)
-          //IN CASH
-          if (
-            (data && typeof data === 'object') ||
-            data?.action === GameAction.CASHOUT
-          ) {
-            (data as any).__skipDecorator = true;
-          }
+//           switch (actionUpper) {
+//             case GameAction.STEP: {
+//               const payload = plainToInstance(StepPayloadDto, data.payload);
+//               await validateOrReject(payload);
+//               const stepResp = await this.gameService.step(
+//                 userId,
+//                 payload.lineNumber,
+//               );
+//               if (this.isStepResponse(stepResp)) {
+//                 const transformed = await this.toClientGameStateAck(
+//                   stepResp as any,
+//                   userId,
+//                 );
+//                 // If finished emit updated balance (already handled in decorator, replicate here)
+//                 if ((stepResp as any).isFinished) {
+//                   await this.safeEmitBalance(sock, userId, 'post-step');
+//                 }
+//                 return ack(transformed);
+//               }
+//               return ack(stepResp);
+//             }
 
-          const rawAction: string = data?.action;
-          const actionUpper =
-            typeof rawAction === 'string' ? rawAction.toUpperCase() : '';
+//             case GameAction.BET: {
+//               const payload = plainToInstance(BetPayloadDto, data.payload);
+//               await validateOrReject(payload);
+//               const betResp = await this.gameService.placeBet(
+//                 userId,
+//                 Number(payload.betAmount),
+//                 payload.difficulty,
+//               );
+//               await this.safeEmitBalance(sock, userId, 'post-bet');
+//               // If bet response itself looks like a step/session we could transform, but keep raw here
+//               if (this.isStepResponse(betResp)) {
+//                 const transformed = await this.toClientGameStateAck(
+//                   betResp as any,
+//                   userId,
+//                 );
+//                 return ack(transformed);
+//               }
+//               return ack(betResp);
+//             }
 
-          switch (actionUpper) {
-            case GameAction.STEP: {
-              const payload = plainToInstance(StepPayloadDto, data.payload);
-              await validateOrReject(payload);
-              const stepResp = await this.gameService.step(
-                userId,
-                payload.lineNumber,
-              );
-              if (this.isStepResponse(stepResp)) {
-                const transformed = await this.toClientGameStateAck(
-                  stepResp as any,
-                  userId,
-                );
-                // If finished emit updated balance (already handled in decorator, replicate here)
-                if ((stepResp as any).isFinished) {
-                  await this.safeEmitBalance(sock, userId, 'post-step');
-                }
-                return ack(transformed);
-              }
-              return ack(stepResp);
-            }
+//             case GameAction.WITHDRAW:
+//             case GameAction.CASHOUT: {
+//               const resp = await this.gameService.cashOut(userId);
+//               await this.safeEmitBalance(sock, userId, 'post-cashout');
+//               if (this.isStepResponse(resp)) {
+//                 const transformed = await this.toClientGameStateAck(
+//                   resp as any,
+//                   userId,
+//                 );
+//                 return ack(transformed);
+//               }
+//               return ack(resp);
+//             }
 
-            case GameAction.BET: {
-              const payload = plainToInstance(BetPayloadDto, data.payload);
-              await validateOrReject(payload);
-              const betResp = await this.gameService.placeBet(
-                userId,
-                Number(payload.betAmount),
-                payload.difficulty,
-              );
-              await this.safeEmitBalance(sock, userId, 'post-bet');
-              // If bet response itself looks like a step/session we could transform, but keep raw here
-              if (this.isStepResponse(betResp)) {
-                const transformed = await this.toClientGameStateAck(
-                  betResp as any,
-                  userId,
-                );
-                return ack(transformed);
-              }
-              return ack(betResp);
-            }
+//             case GameAction.GET_GAME_SESSION: {
+//               const resp = await this.gameService.getActiveSession(userId);
+//               // Session object is sent raw
+//               return ack(resp ?? null);
+//             }
 
-            case GameAction.WITHDRAW:
-            case GameAction.CASHOUT: {
-              const resp = await this.gameService.cashOut(userId);
-              await this.safeEmitBalance(sock, userId, 'post-cashout');
-              if (this.isStepResponse(resp)) {
-                const transformed = await this.toClientGameStateAck(
-                  resp as any,
-                  userId,
-                );
-                return ack(transformed);
-              }
-              return ack(resp);
-            }
+//             case GameAction.GET_GAME_CONFIG: {
+//               // Provide raw config; extend later if need combined coefficients/lastWin
+//               const resp = await this.gameService.getGameConfig();
+//               return ack(resp ?? null);
+//             }
 
-            case GameAction.GET_GAME_SESSION: {
-              const resp = await this.gameService.getActiveSession(userId);
-              // Session object is sent raw
-              return ack(resp ?? null);
-            }
+//             default:
+//               return ack({
+//                 error: 'ACK_UNSUPPORTED_ACTION',
+//                 action: rawAction,
+//               });
+//           }
+//         } catch (e) {
+//           const msg = e instanceof Error ? e.message : String(e);
+//           return ack({ error: msg });
+//         }
+//       };
 
-            case GameAction.GET_GAME_CONFIG: {
-              // Provide raw config; extend later if need combined coefficients/lastWin
-              const resp = await this.gameService.getGameConfig();
-              return ack(resp ?? null);
-            }
-
-            case GameAction.GET_GAME_SEEDS: {
-              const seeds = await this.fairService.getSeeds();
-              const userState = await this.fairService.getUserSeedState(userId);
-              const payload: GameSeedsResponseDto = {
-                userSeed: userState.userSeed,
-                currentServerSeedHash: seeds.currentServerSeedHash,
-                nextServerSeedHash: seeds.nextServerSeedHash,
-                nonce: userState.nonce.toString(),
-              };
-              return ack(payload);
-            }
-
-            case GameAction.SET_USER_SEED: {
-              const dto = plainToInstance(SetUserSeedDto, data.payload);
-              const state = await this.fairService.setUserSeed(
-                userId,
-                dto.userSeed,
-              );
-              const seeds = await this.fairService.getSeeds();
-              const payload: GameSeedsResponseDto = {
-                userSeed: state.userSeed,
-                currentServerSeedHash: seeds.currentServerSeedHash,
-                nextServerSeedHash: seeds.nextServerSeedHash,
-                nonce: state.nonce.toString(),
-              };
-              return ack(payload);
-            }
-
-            case GameAction.REVEAL_SERVER_SEED: {
-              const seeds = await this.fairService.getSeeds();
-              const userState = await this.fairService.getUserSeedState(userId);
-              const payload: RevealServerSeedResponseDto = {
-                userSeed: userState.userSeed,
-                serverSeed: seeds.currentServerSeed,
-                serverSeedHash: seeds.currentServerSeedHash,
-                finalNonce: userState.nonce.toString(),
-              };
-              return ack(payload);
-            }
-
-            case GameAction.ROTATE_SERVER_SEED: {
-              const rotated = await this.fairService.rotateServerSeed();
-              const roundsCountSafe = (rotated.roundsCount ?? 0).toString();
-              return ack({
-                currentServerSeedHash: rotated.currentServerSeedHash,
-                nextServerSeedHash: rotated.nextServerSeedHash,
-                roundsCount: roundsCountSafe,
-              });
-            }
-
-            default:
-              return ack({
-                error: 'ACK_UNSUPPORTED_ACTION',
-                action: rawAction,
-              });
-          }
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          return ack({ error: msg });
-        }
-      };
-
-      // Support both kebab and camelCase event name variants for incoming actions.
-      // Use prependListener so ACK handler runs before NestJS decorator listener.
-      sock.prependListener(WS_EVENTS.GAME_SERVICE, ackHandler);
-      sock.prependListener('game-service', ackHandler); // legacy alias for backward compatibility
-    });
-  }
-}
+//       // Support both kebab and camelCase event name variants for incoming actions.
+//       // Use prependListener so ACK handler runs before NestJS decorator listener.
+//       sock.prependListener(WS_EVENTS.GAME_SERVICE, ackHandler);
+//       sock.prependListener('game-service', ackHandler); // legacy alias for backward compatibility
+//     });
+//   }
+// }

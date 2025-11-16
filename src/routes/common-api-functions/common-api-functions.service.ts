@@ -1,0 +1,293 @@
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { ERROR_CODES } from '../../common/constants';
+import { Agents } from '../../entities/agents.entity';
+import { GameConfigService } from '../../modules/gameConfig/game-config.service';
+import { JwtTokenService } from '../../modules/jwt/jwt-token.service';
+import { CreateUserParams, UserService } from '../../modules/user/user.service';
+import { CreateMemberBodyDto } from './DTO/create-member.dto';
+
+@Injectable()
+export class CommonApiFunctionsService {
+  private readonly logger = new Logger(CommonApiFunctionsService.name);
+
+  constructor(
+    private readonly userService: UserService,
+    private readonly gameConfigService: GameConfigService,
+    private readonly jwtTokenService: JwtTokenService,
+  ) {}
+
+  async createMember(
+    body: CreateMemberBodyDto,
+  ): Promise<{ status: string; desc: string }> {
+    this.logger.log(
+      `[createMember] Request received - agentId: ${body.agentId}, userId: ${body.userId}, currency: ${body.currency}`,
+    );
+
+    const required: (keyof CreateMemberBodyDto)[] = [
+      'cert',
+      'agentId',
+      'userId',
+      'currency',
+      'betLimit',
+    ];
+    for (const field of required) {
+      if (!body[field] || String(body[field]).trim() === '') {
+        this.logger.warn(
+          `[createMember] Missing parameter: ${field} - agentId: ${body.agentId}`,
+        );
+        return {
+          status: ERROR_CODES.PARAMETER_MISSING,
+          desc: `Missing parameter: ${field}`,
+        };
+      }
+    }
+
+    if (!body.agentId) {
+      this.logger.warn(`[createMember] Invalid agentId provided`);
+      return {
+        status: ERROR_CODES.INVALID_AGENT_ID,
+        desc: 'agentId mismatch',
+      };
+    }
+
+    if (!/^[a-z0-9]+$/.test(body.userId)) {
+      this.logger.warn(
+        `[createMember] Invalid userId format: ${body.userId} - agentId: ${body.agentId}`,
+      );
+      return {
+        status: ERROR_CODES.INVALID_USER_ID,
+        desc: 'Invalid userId format',
+      };
+    }
+
+    if (!/^[A-Z]{3,4}$/.test(body.currency)) {
+      this.logger.warn(
+        `[createMember] Invalid currency code: ${body.currency} - userId: ${body.userId}, agentId: ${body.agentId}`,
+      );
+      return {
+        status: ERROR_CODES.INVALID_CURRENCY,
+        desc: 'Invalid currency code',
+      };
+    }
+
+    const params: CreateUserParams = {
+      userId: body.userId,
+      agentId: body.agentId,
+      currency: body.currency,
+      language: body.language,
+      username: body.userName,
+      betLimit: body.betLimit,
+      createdBy: body.agentId,
+    };
+    try {
+      this.logger.log(
+        `[createMember] Creating user - userId: ${body.userId}, agentId: ${body.agentId}`,
+      );
+      await this.userService.create(params);
+      this.logger.log(
+        `[createMember] SUCCESS - User created: ${body.userId}, agentId: ${body.agentId}`,
+      );
+      return {
+        status: ERROR_CODES.SUCCESS,
+        desc: 'Member created successfully',
+      };
+    } catch (err: any) {
+      if (err instanceof ConflictException) {
+        this.logger.warn(
+          `[createMember] Account already exists - userId: ${body.userId}, agentId: ${body.agentId}`,
+        );
+        return {
+          status: ERROR_CODES.ACCOUNT_EXIST,
+          desc: 'Account already exists',
+        };
+      }
+      this.logger.error(
+        `[createMember] ERROR - userId: ${body.userId}, agentId: ${body.agentId}, error: ${err.message}`,
+        err.stack,
+      );
+      return {
+        status: ERROR_CODES.UNABLE_TO_PROCEED,
+        desc: 'Unable to proceed',
+      };
+    }
+  }
+
+  async loginMember(
+    agent: Agents,
+    userId: string,
+    agentId: string,
+  ): Promise<{
+    status: string;
+    url?: string;
+    extension: any[];
+    desc?: string;
+  }> {
+    this.logger.log(
+      `[loginMember] Request received - userId: ${userId}, agentId: ${agentId}`,
+    );
+
+    if (agent.agentId !== agentId) {
+      this.logger.warn(
+        `[loginMember] AgentId mismatch - provided: ${agentId}, expected: ${agent.agentId}`,
+      );
+      return {
+        status: ERROR_CODES.INVALID_AGENT_ID,
+        extension: [],
+        desc: 'agentId mismatch',
+      };
+    }
+    if (!/^[a-z0-9]+$/.test(userId)) {
+      this.logger.warn(
+        `[loginMember] Invalid userId format: ${userId} - agentId: ${agentId}`,
+      );
+      return {
+        status: ERROR_CODES.INVALID_USER_ID,
+        extension: [],
+        desc: 'Invalid userId format',
+      };
+    }
+
+    this.logger.log(
+      `[loginMember] Looking up user - userId: ${userId}, agentId: ${agentId}`,
+    );
+    const existing = await this.userService.findOne(userId, agentId);
+    if (!existing) {
+      this.logger.warn(
+        `[loginMember] Account not found - userId: ${userId}, agentId: ${agentId}`,
+      );
+      return {
+        status: ERROR_CODES.ACCOUNT_NOT_EXIST,
+        extension: [],
+        desc: 'Account not found',
+      };
+    }
+
+    const host = await this.resolveHost();
+    this.logger.log(
+      `[loginMember] Generating JWT token - userId: ${userId}, agentId: ${agentId}, host: ${host}`,
+    );
+    const token = await this.jwtTokenService.signUserToken(userId, agentId);
+    const url = `https://${host}/player/login/apiLogin0?agentId=${encodeURIComponent(agentId)}&x=${encodeURIComponent(token)}`;
+
+    this.logger.log(
+      `[loginMember] SUCCESS - Login URL generated for userId: ${userId}, agentId: ${agentId}`,
+    );
+    return { status: ERROR_CODES.SUCCESS, url, extension: [] };
+  }
+
+  async loginAndLaunchGame(
+    agent: Agents,
+    dto: {
+      userId: string;
+      agentId: string;
+      platform: string;
+      gameType: string;
+      gameCode: string;
+    },
+  ): Promise<{
+    status: string;
+    url?: string;
+    extension: any[];
+    desc?: string;
+  }> {
+    this.logger.log(
+      `[loginAndLaunchGame] Request received - userId: ${dto.userId}, agentId: ${dto.agentId}, platform: ${dto.platform}, gameType: ${dto.gameType}, gameCode: ${dto.gameCode}`,
+    );
+
+    const mandatory: (keyof typeof dto)[] = [
+      'agentId',
+      'userId',
+      'platform',
+      'gameType',
+      'gameCode',
+    ];
+    for (const f of mandatory) {
+      if (!dto[f] || String(dto[f]).trim() === '') {
+        this.logger.warn(
+          `[loginAndLaunchGame] Missing parameter: ${f} - userId: ${dto.userId}, agentId: ${dto.agentId}`,
+        );
+        return {
+          status: ERROR_CODES.PARAMETER_MISSING,
+          extension: [],
+          desc: `Missing parameter: ${f}`,
+        };
+      }
+    }
+
+    this.logger.log(
+      `[loginAndLaunchGame] Delegating to loginMember - userId: ${dto.userId}, agentId: ${dto.agentId}`,
+    );
+    return this.loginMember(agent, dto.userId, dto.agentId);
+  }
+
+  async logoutUsers(
+    agent: Agents,
+    agentId: string,
+    userIdsCsv: string,
+  ): Promise<{
+    status: string;
+    logoutUsers: string[];
+    count: number;
+    desc?: string;
+  }> {
+    this.logger.log(
+      `[logoutUsers] Request received - agentId: ${agentId}, userIds: ${userIdsCsv}`,
+    );
+
+    if (agent.agentId !== agentId) {
+      this.logger.warn(
+        `[logoutUsers] AgentId mismatch - provided: ${agentId}, expected: ${agent.agentId}`,
+      );
+      return {
+        status: ERROR_CODES.INVALID_AGENT_ID,
+        logoutUsers: [],
+        count: 0,
+        desc: 'agentId mismatch',
+      };
+    }
+
+    const logoutUsers = userIdsCsv
+      .split(',')
+      .map((u) => u.trim())
+      .filter(Boolean);
+
+    this.logger.log(
+      `[logoutUsers] SUCCESS - Logged out ${logoutUsers.length} users - agentId: ${agentId}, users: [${logoutUsers.join(', ')}]`,
+    );
+    return {
+      status: ERROR_CODES.SUCCESS,
+      logoutUsers,
+      count: logoutUsers.length,
+    };
+  }
+
+  private async resolveHost(): Promise<string> {
+    const candidateKey = 'frontend.host';
+    try {
+      const value = await this.gameConfigService.getConfig(candidateKey);
+      if (typeof value === 'string' && value.trim()) {
+        this.logger.debug(
+          `[resolveHost] Using configured host: ${value.trim()}`,
+        );
+        return value.trim();
+      }
+      if (value && typeof value === 'object' && 'host' in value) {
+        const hostVal = (value as any).host;
+        if (typeof hostVal === 'string' && hostVal.trim()) {
+          this.logger.debug(
+            `[resolveHost] Using configured host from object: ${hostVal.trim()}`,
+          );
+          return hostVal.trim();
+        }
+      }
+    } catch (e) {
+      this.logger.warn(
+        `[resolveHost] Failed to resolve host from config, using default: localhost`,
+        e,
+      );
+    }
+
+    this.logger.debug(`[resolveHost] Using default host: localhost`);
+    return 'localhost';
+  }
+}

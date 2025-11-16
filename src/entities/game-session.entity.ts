@@ -3,12 +3,10 @@ import {
   CreateDateColumn,
   Entity,
   ManyToOne,
-  OneToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { User } from './User.entity';
-import { GameHistory } from './game-history.entity';
 
 @Entity()
 export class GameSession {
@@ -32,9 +30,6 @@ export class GameSession {
 
   @Column({ default: 'active' })
   status: 'active' | 'finished' | 'cashed_out';
-
-  @OneToOne(() => GameHistory, (history) => history.session)
-  history: GameHistory;
 
   @CreateDateColumn()
   createdAt: Date;

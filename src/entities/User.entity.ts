@@ -1,34 +1,46 @@
 import {
   Column,
+  CreateDateColumn,
   Entity,
-  OneToMany,
-  OneToOne,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
+  UpdateDateColumn,
 } from 'typeorm';
-import { Wallet } from './Wallet.entity';
-import { GameHistory } from './game-history.entity';
-import { GameSession } from './game-session.entity';
 
 @Entity()
 export class User {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+  @PrimaryColumn()
+  userId: string;
 
-  @Column({ unique: true })
-  name: string;
+  @PrimaryColumn()
+  agentId: string;
 
   @Column()
-  avatar: string;
+  currency: string;
+
+  @Column({ nullable: true })
+  language?: string;
+
+  @Column({ nullable: true })
+  username?: string;
+
+  @Column()
+  betLimit: string;
+
+  @Column({ nullable: true })
+  avatar?: string;
 
   @Column({ nullable: true })
   passwordHash?: string;
 
-  @OneToOne(() => Wallet, (wallet) => wallet.user)
-  wallet: Wallet;
+  @CreateDateColumn()
+  createdAt: Date;
 
-  @OneToMany(() => GameSession, (session) => session.user)
-  sessions: GameSession[];
+  @UpdateDateColumn()
+  updatedAt: Date;
 
-  @OneToMany(() => GameHistory, (history) => history.user)
-  histories: GameHistory[];
+  @Column({ nullable: true })
+  createdBy?: string;
+
+  @Column({ nullable: true })
+  updatedBy?: string;
 }

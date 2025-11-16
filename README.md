@@ -96,3 +96,43 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+## Current Scope (Simplified)
+
+Project has been reduced to core authentication and user/admin management only. Game, wallet, transaction, redis, and configuration entities/services have been removed.
+
+Remaining domain entities:
+
+| Entity  | Purpose                                                      |
+| ------- | ------------------------------------------------------------ |
+| `Admin` | Administrative accounts for protected actions.               |
+| `User`  | Basic player/user profile (name, avatar, optional password). |
+
+Removed components (for clarity):
+
+Game modules, WebSocket gateway, game configuration storage, wallet & transaction history, Redis cache module, seeding scripts, and all related DTOs/services.
+
+### Authentication
+
+Only environment-based JWT secret loading is now supported. Set `JWT_SECRET` in your environment before starting the server.
+
+Example (Windows CMD):
+
+```cmd
+set JWT_SECRET=CHANGE_ME_AND_RESTART
+npm run start:dev
+```
+
+### Migration Notes
+
+If you had existing MySQL tables for removed entities, you can drop them safely:
+`game_config`, `game_session`, `game_history`, `transaction_history`, `wallet`.
+
+### Next Steps (Optional Enhancements)
+
+1. Add password reset flow for Users.
+2. Introduce role/permission system if admins need finer control.
+3. Add pagination to user listing.
+4. Implement audit logging for admin actions.
+
+Feel free to reintroduce modules incrementally; keep each feature isolated behind its own Nest module for cleanliness.

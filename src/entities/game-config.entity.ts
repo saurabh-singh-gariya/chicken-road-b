@@ -13,8 +13,8 @@ export class GameConfig {
   @Column()
   key: string;
 
-  @Column({ type: 'json' })
-  value: any;
+  @Column({ type: 'text' })
+  value: string;
 
   @UpdateDateColumn()
   updatedAt: Date;
