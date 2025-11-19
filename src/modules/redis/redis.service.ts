@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import Redis from 'ioredis';
 import { GameConfigService } from '../gameConfig/game-config.service';
 
@@ -14,6 +14,7 @@ export class RedisService {
 
   constructor(
     @Inject('REDIS_CLIENT') private readonly redisClient: Redis,
+    @Inject(forwardRef(() => GameConfigService))
     private readonly gameConfigService: GameConfigService,
   ) {}
 

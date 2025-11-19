@@ -52,10 +52,10 @@ export class Bet {
   betType?: string;
 
   // Monetary amounts
-  @Column('decimal', { precision: 18, scale: 4 })
+  @Column('decimal', { precision: 18, scale: 3 })
   betAmount: string;
 
-  @Column('decimal', { precision: 18, scale: 4, nullable: true })
+  @Column('decimal', { precision: 18, scale: 3, nullable: true })
   winAmount?: string; // populated after settlement (0 if lost)
 
   @Column({ length: 4 })
@@ -95,10 +95,10 @@ export class Bet {
   @Column({ type: 'text', nullable: true })
   gameInfo?: string;
 
-  @Column('decimal', { precision: 18, scale: 4, nullable: true })
+  @Column('decimal', { precision: 18, scale: 3, nullable: true })
   balanceAfterBet?: string;
 
-  @Column('decimal', { precision: 18, scale: 4, nullable: true })
+  @Column('decimal', { precision: 18, scale: 3, nullable: true })
   balanceAfterSettlement?: string;
 
   @CreateDateColumn()

@@ -7,15 +7,26 @@ import {
 } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 import { AgentsService } from '../../modules/agents/agents.service';
+import { GameConfigService } from '../../modules/gameConfig/game-config.service';
+import {
+  WalletErrorService,
+} from '../../modules/wallet-error/wallet-error.service';
+import {
+  WalletApiAction,
+  WalletErrorType,
+} from '../../entities/wallet-error.entity';
 
 @Injectable()
 export class SingleWalletFunctionsService {
+
   private readonly logger = new Logger(SingleWalletFunctionsService.name);
 
   constructor(
     private readonly agentsService: AgentsService,
     private readonly http: HttpService,
-  ) {}
+    private readonly gameConfigService: GameConfigService,
+    private readonly walletErrorService: WalletErrorService,
+  ) { }
 
   private async resolveAgent(agentId: string) {
     const agent = await this.agentsService.findOne(agentId);
@@ -31,13 +42,6 @@ export class SingleWalletFunctionsService {
 
   // Unified agent response interface
   private mapAgentResponse(data: any) {
-    return {
-      balance: 10002,
-      balanceTs: new Date().toISOString(),
-      status: '0000',
-      userId: data.userId,
-      raw: data,
-    };
     if (!data || typeof data.status !== 'string') {
       throw new InternalServerErrorException('Malformed agent response');
     }
@@ -61,18 +65,55 @@ export class SingleWalletFunctionsService {
     raw: any;
   }> {
     const { callbackURL, cert } = await this.resolveAgent(agentId);
-    const url = callbackURL; // assumed full endpoint from DB
+    const url = callbackURL;
     const messageObj = { action: 'getBalance', userId };
     const payload = { key: cert, message: JSON.stringify(messageObj) };
     this.logger.debug(`Calling getBalance url=${url} agent=${agentId}`);
     try {
       const resp = await firstValueFrom(this.http.post<any>(url, payload));
       return this.mapAgentResponse(resp.data);
-    } catch (err) {
+    } catch (err: any) {
       this.logger.error(
         `getBalance failed agent=${agentId} user=${userId}`,
-        err as any,
+        err,
       );
+
+      // Determine error type
+      let errorType = WalletErrorType.UNKNOWN_ERROR;
+      let httpStatus: number | undefined;
+      let responseData: any = null;
+
+      if (err.response) {
+        httpStatus = err.response.status;
+        responseData = err.response.data;
+        errorType = WalletErrorType.HTTP_ERROR;
+      } else if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+        errorType = WalletErrorType.NETWORK_ERROR;
+      } else if (err.code === 'ETIMEDOUT' || err.name === 'TimeoutError') {
+        errorType = WalletErrorType.TIMEOUT_ERROR;
+      }
+
+      // Log error to database
+      try {
+        await this.walletErrorService.createError({
+          agentId,
+          userId,
+          apiAction: WalletApiAction.GET_BALANCE,
+          errorType,
+          errorMessage: err.message || 'Unknown error',
+          errorStack: err.stack,
+          requestPayload: { messageObj, url },
+          responseData,
+          httpStatus,
+          callbackUrl: url,
+          rawError: JSON.stringify(err),
+        });
+      } catch (logError) {
+        this.logger.error(
+          `Failed to log wallet error to database: ${logError}`,
+        );
+      }
+
       throw err;
     }
   }
@@ -84,6 +125,7 @@ export class SingleWalletFunctionsService {
     roundId: string,
     platformTxId: string,
     currency: string = 'INR',
+    gamePayloads: any
   ): Promise<{
     balance: number;
     balanceTs: string | null;
@@ -94,20 +136,19 @@ export class SingleWalletFunctionsService {
     const { callbackURL, cert } = await this.resolveAgent(agentId);
     const url = callbackURL;
     const betTime = new Date().toISOString();
+
     const txn = {
       platformTxId,
       userId,
       currency,
-      platform: 'SPADE',
-      gameType: 'SPADE',
-      gameCode: 'chicken-road-2',
-      gameName: 'ChickenRoad',
+      ...gamePayloads,
       betType: null,
       betAmount: amount,
       betTime,
       roundId,
       isPremium: false,
     };
+
     const messageObj = { action: 'bet', txns: [txn] };
     const payload = { key: cert, message: JSON.stringify(messageObj) };
     this.logger.debug(
@@ -115,33 +156,87 @@ export class SingleWalletFunctionsService {
     );
     try {
       const resp = await firstValueFrom(this.http.post<any>(url, payload));
-      return this.mapAgentResponse(resp.data);
-    } catch (err) {
+      const mappedResponse = this.mapAgentResponse(resp.data);
+      
+      // Check if agent rejected the bet
+      if (mappedResponse.status !== '0000') {
+        await this.walletErrorService.createError({
+          agentId,
+          userId,
+          apiAction: WalletApiAction.PLACE_BET,
+          errorType: WalletErrorType.AGENT_REJECTED,
+          errorMessage: `Agent rejected bet with status: ${mappedResponse.status}`,
+          requestPayload: { messageObj, url },
+          responseData: mappedResponse.raw,
+          platformTxId,
+          roundId,
+          betAmount: amount,
+          currency,
+          callbackUrl: url,
+        });
+      }
+      
+      return mappedResponse;
+    } catch (err: any) {
       this.logger.error(
         `placeBet failed agent=${agentId} user=${userId}`,
-        err as any,
+        err,
       );
-      throw err;
 
-      //Return mock response for now
-      return {
-        balance: 1000,
-        balanceTs: new Date().toISOString(),
-        status: 'success',
-        userId,
-        raw: {},
-      };
+      // Determine error type
+      let errorType = WalletErrorType.UNKNOWN_ERROR;
+      let httpStatus: number | undefined;
+      let responseData: any = null;
+
+      if (err.response) {
+        httpStatus = err.response.status;
+        responseData = err.response.data;
+        errorType = WalletErrorType.HTTP_ERROR;
+      } else if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+        errorType = WalletErrorType.NETWORK_ERROR;
+      } else if (err.code === 'ETIMEDOUT' || err.name === 'TimeoutError') {
+        errorType = WalletErrorType.TIMEOUT_ERROR;
+      }
+
+      // Log error to database
+      try {
+        await this.walletErrorService.createError({
+          agentId,
+          userId,
+          apiAction: WalletApiAction.PLACE_BET,
+          errorType,
+          errorMessage: err.message || 'Unknown error',
+          errorStack: err.stack,
+          requestPayload: { messageObj, url },
+          responseData,
+          httpStatus,
+          platformTxId,
+          roundId,
+          betAmount: amount,
+          currency,
+          callbackUrl: url,
+          rawError: JSON.stringify(err),
+        });
+      } catch (logError) {
+        this.logger.error(
+          `Failed to log wallet error to database: ${logError}`,
+        );
+      }
+
+      throw err;
     }
   }
 
-  // 3. settleBet
+
   async settleBet(
     agentId: string,
     platformTxId: string,
     userId: string,
-    winAmount: string,
+    winAmount: number,
     roundId: string,
-    betAmount: string,
+    betAmount: number,
+    gamePayloads: any,
+    gameSession?: any
   ): Promise<{
     balance: number;
     balanceTs: string | null;
@@ -151,38 +246,25 @@ export class SingleWalletFunctionsService {
   }> {
     const { callbackURL, cert } = await this.resolveAgent(agentId);
     const url = callbackURL;
-    // Settlement txn per earlier example; refPlatformTxId null and settleType platformTxId
     const txTime = new Date().toISOString();
     const txn = {
       platformTxId,
       userId,
-      platform: 'SPADE',
+      ...gamePayloads,
       refPlatformTxId: null,
-      settleType: 'platformTxId',
-      gameType: 'SPADE',
-      gameCode: 'chicken-road-2',
-      gameName: 'ChickenRoad',
+      settleType: gamePayloads.settleType,
+      gameType: gamePayloads.gameType,
+      gameCode: gamePayloads.gameCode,
+      gameName: gamePayloads.gameName,
       betType: null,
       betAmount: Number(betAmount),
       winAmount: Number(winAmount),
-      turnover: Number(betAmount),
       betTime: txTime,
-      txTime,
-      updateTime: txTime,
       roundId,
-      gameInfo: {
-        result: Number(winAmount) > 0 ? 1 : -1,
-        settled: 1,
-        matchResult: Number(winAmount) > 0 ? 'WIN' : 'LOSE',
-        odds: '1.00',
-        ip: '0.0.0.0',
-        matchno: 1,
-        oddsMode: 0,
-        arena: 'N/A',
-        bddType: 0,
-        status: Number(winAmount) > 0 ? 'WIN' : 'LOSE',
-      },
     };
+    if(gameSession) {
+      txn.gameInfo = JSON.stringify(gameSession);
+    }
     const messageObj = { action: 'settle', txns: [txn] };
     const payload = { key: cert, message: JSON.stringify(messageObj) };
     this.logger.debug(
@@ -190,12 +272,76 @@ export class SingleWalletFunctionsService {
     );
     try {
       const resp = await firstValueFrom(this.http.post<any>(url, payload));
-      return this.mapAgentResponse(resp.data);
-    } catch (err) {
+      const mappedResponse = this.mapAgentResponse(resp.data);
+      
+      // Check if agent rejected the settlement
+      if (mappedResponse.status !== '0000') {
+        await this.walletErrorService.createError({
+          agentId,
+          userId,
+          apiAction: WalletApiAction.SETTLE_BET,
+          errorType: WalletErrorType.AGENT_REJECTED,
+          errorMessage: `Agent rejected settlement with status: ${mappedResponse.status}`,
+          requestPayload: { messageObj, url },
+          responseData: mappedResponse.raw,
+          httpStatus: resp.status,
+          platformTxId,
+          roundId,
+          betAmount,
+          winAmount,
+          currency: gamePayloads.currency || 'INR',
+          callbackUrl: url,
+        });
+      }
+      
+      return mappedResponse;
+    } catch (err: any) {
       this.logger.error(
         `settleBet failed agent=${agentId} txId=${platformTxId}`,
-        err as any,
+        err,
       );
+
+      // Determine error type
+      let errorType = WalletErrorType.UNKNOWN_ERROR;
+      let httpStatus: number | undefined;
+      let responseData: any = null;
+
+      if (err.response) {
+        httpStatus = err.response.status;
+        responseData = err.response.data;
+        errorType = WalletErrorType.HTTP_ERROR;
+      } else if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+        errorType = WalletErrorType.NETWORK_ERROR;
+      } else if (err.code === 'ETIMEDOUT' || err.name === 'TimeoutError') {
+        errorType = WalletErrorType.TIMEOUT_ERROR;
+      }
+
+      // Log error to database
+      try {
+        await this.walletErrorService.createError({
+          agentId,
+          userId,
+          apiAction: WalletApiAction.SETTLE_BET,
+          errorType,
+          errorMessage: err.message || 'Unknown error',
+          errorStack: err.stack,
+          requestPayload: { messageObj, url },
+          responseData,
+          httpStatus,
+          platformTxId,
+          roundId,
+          betAmount,
+          winAmount,
+          currency: gamePayloads.currency || 'INR',
+          callbackUrl: url,
+          rawError: JSON.stringify(err),
+        });
+      } catch (logError) {
+        this.logger.error(
+          `Failed to log wallet error to database: ${logError}`,
+        );
+      }
+
       throw err;
     }
   }

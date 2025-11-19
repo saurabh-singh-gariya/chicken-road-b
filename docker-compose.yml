@@ -1,0 +1,19 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chicken-road-backend
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.local
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - chicken-road-network
+
+networks:
+  chicken-road-network:
+    driver: bridge

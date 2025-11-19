@@ -5,9 +5,11 @@ import { GameConfigModule } from '../../modules/gameConfig/game-config.module';
 import { HazardModule } from '../../modules/hazard/hazard.module';
 import { JwtTokenModule } from '../../modules/jwt/jwt-token.module';
 import { RedisModule } from '../../modules/redis/redis.module';
+import { WalletErrorModule } from '../../modules/wallet-error/wallet-error.module';
 import { SingleWalletFunctionsModule } from '../single-wallet-functions/single-wallet-functions.module';
 import { GamePlayGateway } from './game-play.gateway';
 import { GamePlayService } from './game-play.service';
+import { UserModule } from '../../modules/user/user.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { GamePlayService } from './game-play.service';
     BetModule,
     HazardModule,
     SingleWalletFunctionsModule,
+    UserModule,
+    WalletErrorModule,
   ],
   providers: [GamePlayGateway, GamePlayService],
   exports: [GamePlayGateway, GamePlayService],

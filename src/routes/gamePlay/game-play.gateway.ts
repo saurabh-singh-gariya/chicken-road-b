@@ -16,6 +16,8 @@ import {
 } from '../../modules/jwt/jwt-token.service';
 import { GameAction, GameActionDto } from './DTO/game-action.dto';
 import { GamePlayService } from './game-play.service';
+import { SingleWalletFunctionsService } from '../single-wallet-functions/single-wallet-functions.service';
+import { UserService } from '../../modules/user/user.service';
 
 const WS_EVENTS = {
   CONNECTION_ERROR: 'connection-error',
@@ -50,12 +52,18 @@ const ERROR_RESPONSES = {
 } as const;
 
 const TOKEN_SUFFIX_PATTERN = /=4$/;
-const DEFAULT_CURRENCY = 'USD';
+const DEFAULT_CURRENCY = 'INR';
 const DEFAULT_BALANCE = '1000000';
 
 interface BalanceEventPayload {
   currency: string;
   balance: string;
+}
+
+interface MyDataEvent {
+  userId: string;
+  nickname: string;
+  gameAvatar: string | null;
 }
 
 @WebSocketGateway({ cors: true, path: '/io/' })
@@ -70,6 +78,8 @@ export class GamePlayGateway
   constructor(
     private readonly jwtTokens: JwtTokenService,
     private readonly gamePlayService: GamePlayService,
+    private readonly singleWalletFunctionsService: SingleWalletFunctionsService,
+    private readonly userService: UserService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -140,9 +150,13 @@ export class GamePlayGateway
       balance: DEFAULT_BALANCE,
     };
 
+    const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
+    balance.balance = walletBalance.balance.toString();
+    balance.currency = DEFAULT_CURRENCY;
+
     const betsRanges = { INR: ['0.01', '150.00'] };
 
-    let { betConfig } = (await this.gamePlayService.getGameConfigPayload())[0];
+    let { betConfig } = await this.gamePlayService.getGameConfigPayload();
 
     betConfig = {
       INR: {
@@ -150,10 +164,12 @@ export class GamePlayGateway
       },
     };
 
-    const myData = {
+    const userData = await this.userService.findOne(userId, agentId);
+
+    const myData : MyDataEvent = {
       userId: userId,
-      nickname: 'Salmon Suspicious Squid',
-      gameAvatar: null,
+      nickname: userData.username || userId,
+      gameAvatar: userData?.avatar || null,
     };
 
     client.emit(WS_EVENTS.BALANCE_CHANGE, balance);
@@ -201,7 +217,7 @@ export class GamePlayGateway
     if (rawAction === 'get-game-config') {
       const payload = await this.gamePlayService.getGameConfigPayload();
       this.logger.log(`Emitting game config (event) to ${client.id}`);
-      client.emit(WS_EVENTS.GAME_SERVICE, payload[0]);
+      client.emit(WS_EVENTS.GAME_SERVICE, payload);
       return;
     }
     const knownPlaceholders: GameAction[] = [
@@ -273,7 +289,7 @@ export class GamePlayGateway
       const ackHandler = (data: any, ack?: Function) => {
         if (typeof ack !== 'function') return;
         const rawAction: string | undefined = data?.action;
-        if (!rawAction) return ack([{ error: ERROR_RESPONSES.MISSING_ACTION }]);
+        if (!rawAction) return ack({ error: ERROR_RESPONSES.MISSING_ACTION });
         if (rawAction === GameAction.GET_GAME_CONFIG) {
           this.gamePlayService
             .getGameConfigPayload()
@@ -283,13 +299,11 @@ export class GamePlayGateway
             })
             .catch((e) => {
               this.logger.error(`ACK game config failed: ${e}`);
-              ack([{ error: ERROR_RESPONSES.CONFIG_FETCH_FAILED }]);
+              ack({ error: ERROR_RESPONSES.CONFIG_FETCH_FAILED });
             });
           return;
         }
         const knownPlaceholders: GameAction[] = [
-          GameAction.WITHDRAW,
-          GameAction.CASHOUT,
           GameAction.GET_GAME_SESSION,
           GameAction.GET_GAME_SEEDS,
           GameAction.SET_USER_SEED,
@@ -300,19 +314,31 @@ export class GamePlayGateway
           const agentId: string | undefined = sock.data?.agentId;
           const gameMode: string | undefined = sock.data?.gameMode;
           if (!userId || !agentId || !gameMode) {
-            return ack([
-              {
-                error: ERROR_RESPONSES.MISSING_CONTEXT,
-                details: { userId, agentId, gameMode },
-              },
-            ]);
+            return ack({
+              error: ERROR_RESPONSES.MISSING_CONTEXT,
+              details: { userId, agentId, gameMode },
+            });
           }
           this.gamePlayService
             .performBetFlow(userId, agentId, gameMode, data?.payload)
-            .then((resp) => ack([resp]))
+            .then(async (resp) => {
+              // Emit onBalanceChange after successful bet
+              ack(resp);
+              if (!('error' in resp)) {
+                const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
+                const balanceEvent: BalanceEventPayload = {
+                  currency: DEFAULT_CURRENCY,
+                  balance: walletBalance.balance.toString(),
+                };
+                sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
+                this.logger.debug(
+                  `Emitted onBalanceChange after bet: balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                );
+              }
+            })
             .catch((e) => {
               this.logger.error(`Bet flow failed for socket ${sock.id}: ${e}`);
-              ack([{ error: ERROR_RESPONSES.BET_FAILED }]);
+              ack({ error: ERROR_RESPONSES.BET_FAILED });
             });
           return;
         }
@@ -322,34 +348,62 @@ export class GamePlayGateway
           const agentId: string | undefined = sock.data?.agentId;
 
           if (!userId || !agentId) {
-            return ack([{ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT }]);
+            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
           }
           const lineNumber = Number(data?.payload?.lineNumber);
           if (!isFinite(lineNumber))
-            return ack([{ error: ERROR_RESPONSES.INVALID_LINE_NUMBER }]);
+            return ack({ error: ERROR_RESPONSES.INVALID_LINE_NUMBER });
 
           this.gamePlayService
             .performStepFlow(userId, agentId, lineNumber)
-            .then((r) => ack([r]))
+            .then(async (r) => {
+              ack(r);
+              // Emit onBalanceChange after step when isFinished is true
+              if (!('error' in r) && r.isFinished) {
+                const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
+                const balanceEvent: BalanceEventPayload = {
+                  currency: r.currency,
+                  balance: walletBalance.balance.toString(),
+                };
+                sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
+                this.logger.debug(
+                  `Emitted onBalanceChange after step (finished): balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                );
+              }
+            })
             .catch((e) => {
               this.logger.error(`Step flow failed: ${e}`);
-              ack([{ error: ERROR_RESPONSES.STEP_FAILED }]);
+              ack({ error: ERROR_RESPONSES.STEP_FAILED });
             });
           return;
         }
 
-        if (rawAction === GameAction.CASHOUT) {
+        if (rawAction === GameAction.CASHOUT || rawAction === GameAction.WITHDRAW) {
           const userId: string | undefined = sock.data?.userId;
           const agentId: string | undefined = sock.data?.agentId;
           if (!userId || !agentId) {
-            return ack([{ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT }]);
+            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
           }
           this.gamePlayService
             .performCashOutFlow(userId, agentId)
-            .then((r) => ack([r]))
+            .then(async (r) => {
+              // Emit onBalanceChange after successful cashout
+              ack(r);
+              if (!('error' in r)) {
+                const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
+                const balanceEvent: BalanceEventPayload = {
+                  currency: DEFAULT_CURRENCY,
+                  balance: walletBalance.balance.toString(),
+                };
+                sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
+                this.logger.debug(
+                  `Emitted onBalanceChange after cashout: balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                );
+              }
+            })
             .catch((e) => {
               this.logger.error(`Cashout flow failed: ${e}`);
-              ack([{ error: ERROR_RESPONSES.CASHOUT_FAILED }]);
+              ack({ error: ERROR_RESPONSES.CASHOUT_FAILED });
             });
           return;
         }
@@ -358,14 +412,14 @@ export class GamePlayGateway
           const userId: string | undefined = sock.data?.userId;
           const agentId: string | undefined = sock.data?.agentId;
           if (!userId || !agentId) {
-            return ack([{ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT }]);
+            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
           }
           this.gamePlayService
             .performGetSessionFlow(userId, agentId)
-            .then((r) => ack([r]))
+            .then((r) => ack(r))
             .catch((e) => {
               this.logger.error(`Get session flow failed: ${e}`);
-              ack([{ error: ERROR_RESPONSES.GET_SESSION_FAILED }]);
+              ack({ error: ERROR_RESPONSES.GET_SESSION_FAILED });
             });
           return;
         }
@@ -375,12 +429,12 @@ export class GamePlayGateway
             this.gamePlayService.buildPlaceholder(rawAction, data?.payload),
           );
         }
-        return ack([
+        return ack(
           {
             action: rawAction,
             status: 'unsupported_action',
           },
-        ]);
+        );
       };
       sock.prependListener(WS_EVENTS.GAME_SERVICE, ackHandler);
     });

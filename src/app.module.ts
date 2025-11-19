@@ -4,6 +4,8 @@ import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
+import redisConfig from './config/redis.config';
+import jwtConfig from './config/jwt.config';
 
 import { User } from './entities/User.entity';
 import { Agents } from './entities/agents.entity';
@@ -12,6 +14,7 @@ import { GameConfig } from './entities/game-config.entity';
 import { AgentsModule } from './modules/agents/agents.module';
 import { BetModule } from './modules/bet/bet.module';
 import { HazardModule } from './modules/hazard/hazard.module';
+import { WalletErrorModule } from './modules/wallet-error/wallet-error.module';
 import { CommonApiFunctionsModule } from './routes/common-api-functions/common-api-functions.module';
 import { GameApiRoutesModule } from './routes/game-api-routes/game-api-routes.module';
 import { GamePlayModule } from './routes/gamePlay/game-play.module';
@@ -22,7 +25,7 @@ import { SingleWalletFunctionsModule } from './routes/single-wallet-functions/si
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, databaseConfig],
+      load: [appConfig, databaseConfig, redisConfig, jwtConfig],
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -58,6 +61,7 @@ import { SingleWalletFunctionsModule } from './routes/single-wallet-functions/si
     AgentsModule,
     HazardModule,
     BetModule,
+    WalletErrorModule,
     CommonApiFunctionsModule,
     GameApiRoutesModule,
     GamePlayModule,

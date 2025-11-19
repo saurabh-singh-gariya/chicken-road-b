@@ -7,6 +7,13 @@ import { BetService } from '../../modules/bet/bet.service';
 import { GameConfigService } from '../../modules/gameConfig/game-config.service';
 import { HazardSchedulerService } from '../../modules/hazard/hazard-scheduler.service';
 import { RedisService } from '../../modules/redis/redis.service';
+import {
+  WalletErrorService,
+} from '../../modules/wallet-error/wallet-error.service';
+import {
+  WalletApiAction,
+  WalletErrorType,
+} from '../../entities/wallet-error.entity';
 import { SingleWalletFunctionsService } from '../single-wallet-functions/single-wallet-functions.service';
 import { BetPayloadDto, Difficulty } from './DTO/bet-payload.dto';
 
@@ -41,23 +48,22 @@ export interface BetStepResponse {
   collisionPositions?: string[];
 }
 
-type GameConfigPayload = [
+type GameConfigPayload =
   {
     betConfig: Record<string, any>;
     coefficients: Record<string, any>;
     lastWin: { username: string; winAmount: string; currency: string };
-  },
-];
+  }
 
 const GAME_CONSTANTS = {
   TOTAL_COLUMNS: 15,
   HAZARD_REFRESH_MS: 5000,
-  DECIMAL_PLACES: 2,
+  DECIMAL_PLACES: 3,
   INITIAL_STEP: -1,
-  PLATFORM_NAME: 'SPADE',
-  GAME_TYPE: 'SPADE',
+  PLATFORM_NAME: 'In-out',
+  GAME_TYPE: 'CRASH',
   GAME_CODE: 'chicken-road-2',
-  GAME_NAME: 'ChickenRoad',
+  GAME_NAME: 'chicken-road-2',
 } as const;
 
 const HAZARD_CONFIG = {
@@ -75,7 +81,7 @@ const ERROR_MESSAGES = {
   INVALID_DIFFICULTY_CONFIG: 'invalid_difficulty_config',
   NO_ACTIVE_SESSION: 'no_active_session',
   INVALID_STEP_SEQUENCE: 'invalid_step_sequence',
-  SETTLEMENT_FAILED: 'settlement_failed',
+  SETTLEMENT_FAILED: 'settlement_failed Please contact support',
 } as const;
 
 @Injectable()
@@ -94,7 +100,8 @@ export class GamePlayService {
     private readonly singleWalletFunctionsService: SingleWalletFunctionsService,
     private readonly betService: BetService,
     private readonly hazardSchedulerService: HazardSchedulerService,
-  ) {}
+    private readonly walletErrorService: WalletErrorService,
+  ) { }
 
   async performBetFlow(
     userId: string,
@@ -102,6 +109,7 @@ export class GamePlayService {
     gameMode: string,
     incoming: any,
   ): Promise<BetStepResponse | { error: string; details?: any[] }> {
+
     const redisKey = `gameSession:${userId}-${agentId}`;
     const existingSession: GameSession =
       await this.redisService.get<any>(redisKey);
@@ -128,11 +136,13 @@ export class GamePlayService {
     }
     const betAmountStr = betNumber.toFixed(GAME_CONSTANTS.DECIMAL_PLACES);
 
-    const difficultyUC = dto.difficulty; // Already uppercase from enum
+    const difficultyUC = dto.difficulty;
     const currencyUC = dto.currency.toUpperCase();
 
     const roundId = `${userId}${Date.now()}`;
-    const platformTxId = `${userId}-${agentId}-${uuidv4()}`;
+    const platformTxId = `${uuidv4()}`;
+
+    const gamePayloads = await this.gameConfigService.getChickenRoadGamePayloads();
 
     const agentResult = await this.singleWalletFunctionsService.placeBet(
       agentId,
@@ -141,6 +151,7 @@ export class GamePlayService {
       roundId,
       platformTxId,
       currencyUC,
+      gamePayloads,
     );
 
     if (agentResult.status !== '0000') {
@@ -164,10 +175,10 @@ export class GamePlayService {
       difficulty: dto.difficulty as BetDifficulty,
       betAmount: betAmountStr,
       currency: currencyUC,
-      platform: GAME_CONSTANTS.PLATFORM_NAME,
-      gameType: GAME_CONSTANTS.GAME_TYPE,
-      gameCode: GAME_CONSTANTS.GAME_CODE,
-      gameName: GAME_CONSTANTS.GAME_NAME,
+      platform: gamePayloads.platform,
+      gameType: gamePayloads.gameType,
+      gameCode: gamePayloads.gameCode,
+      gameName: gamePayloads.gameName,
       isPremium: false,
       betPlacedAt: balanceTs ? new Date(balanceTs) : undefined,
       balanceAfterBet: balance ? String(balance) : undefined,
@@ -175,7 +186,7 @@ export class GamePlayService {
     });
 
     const cfgPayload = await this.getGameConfigPayload();
-    const coefficients = cfgPayload[0].coefficients || {};
+    const coefficients = cfgPayload.coefficients || {};
     const coeffArray: string[] = coefficients[difficultyUC] || [];
 
     if (!coeffArray || coeffArray.length === 0) {
@@ -192,7 +203,7 @@ export class GamePlayService {
       currentStep: GAME_CONSTANTS.INITIAL_STEP,
       isActive: true,
       isWin: false,
-      winAmount: 0,
+      winAmount: betNumber,
       coefficients: coeffArray,
       createdAt: new Date(),
       platformBetTxId: externalPlatformTxId,
@@ -202,8 +213,8 @@ export class GamePlayService {
 
     const resp: BetStepResponse = {
       isFinished: false,
-      coeff: '0.00',
-      winAmount: '0.00',
+      coeff: '1',
+      winAmount: betAmountStr,
       difficulty: difficultyUC,
       betAmount: betAmountStr,
       currency: currencyUC,
@@ -292,23 +303,25 @@ export class GamePlayService {
     // Save session state
     await this.redisService.set(redisKey, gameSession);
 
-    // Handle settlement if game ended
+    const gamePayloads = await this.gameConfigService.getChickenRoadGamePayloads();
+
+    let settlementAmount = 0;
+    if (endReason === 'hazard') {
+      settlementAmount = 0.00;
+    } else if (endReason === 'win') {
+      settlementAmount = gameSession.winAmount;
+    }
     if (endReason === 'win' || endReason === 'hazard') {
-      const finalWinAmount = gameSession.isWin ? gameSession.winAmount : 0;
-      const settlementAmount = finalWinAmount - gameSession.betAmount;
-
-      this.logger.log(
-        `Settling bet: user=${userId} endReason=${endReason} betAmount=${gameSession.betAmount} winAmount=${finalWinAmount} settlement=${settlementAmount}`,
-      );
-
       try {
         const settleResult = await this.singleWalletFunctionsService.settleBet(
           gameSession.agentId,
           gameSession.platformBetTxId,
           userId,
-          settlementAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
+          settlementAmount,
           gameSession.roundId,
-          gameSession.betAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
+          gameSession.betAmount,
+          gamePayloads,
+          gameSession,
         );
 
         this.logger.log(
@@ -317,18 +330,43 @@ export class GamePlayService {
 
         await this.betService.recordSettlement({
           externalPlatformTxId: gameSession.platformBetTxId,
-          winAmount: finalWinAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
+          winAmount: settlementAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
           settledAt: new Date(),
           balanceAfterSettlement: settleResult.balance
             ? String(settleResult.balance)
             : undefined,
           updatedBy: userId,
         });
-      } catch (error) {
+      } catch (error: any) {
         this.logger.error(
           `Settlement failed: user=${userId} txId=${gameSession.platformBetTxId}`,
           error,
         );
+
+        // Log error to database (note: error may already be logged in singleWalletFunctionsService,
+        // but we log here with game context for better tracking)
+        try {
+          await this.walletErrorService.createError({
+            agentId: gameSession.agentId,
+            userId,
+            apiAction: WalletApiAction.SETTLE_BET,
+            errorType: WalletErrorType.UNKNOWN_ERROR,
+            errorMessage: error.message || ERROR_MESSAGES.SETTLEMENT_FAILED,
+            errorStack: error.stack,
+            platformTxId: gameSession.platformBetTxId,
+            roundId: gameSession.roundId,
+            betAmount: gameSession.betAmount,
+            winAmount: settlementAmount,
+            currency: gameSession.currency,
+            rawError: JSON.stringify(error),
+          });
+        } catch (logError) {
+          this.logger.error(
+            `Failed to log settlement error to database: ${logError}`,
+          );
+        }
+
+        throw new Error(ERROR_MESSAGES.SETTLEMENT_FAILED);
       }
     }
 
@@ -367,22 +405,24 @@ export class GamePlayService {
 
     await this.redisService.set(redisKey, gameSession);
 
-    // Handle cashout settlement
-    const finalWinAmount = gameSession.winAmount;
-    const settlementAmount = finalWinAmount - gameSession.betAmount;
+    const settlementAmount = gameSession.winAmount;
 
     this.logger.log(
-      `Cashout: user=${userId} betAmount=${gameSession.betAmount} winAmount=${finalWinAmount} settlement=${settlementAmount}`,
+      `Cashout: user=${userId} betAmount=${gameSession.betAmount} winAmount=${settlementAmount} settlement=${settlementAmount}`,
     );
+
+    const gamePayloads = await this.gameConfigService.getChickenRoadGamePayloads();
 
     try {
       const settleResult = await this.singleWalletFunctionsService.settleBet(
         gameSession.agentId,
         gameSession.platformBetTxId,
         userId,
-        settlementAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
+        settlementAmount,
         gameSession.roundId,
-        gameSession.betAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
+        gameSession.betAmount,
+        gamePayloads,
+        gameSession,
       );
 
       this.logger.log(
@@ -391,7 +431,7 @@ export class GamePlayService {
 
       await this.betService.recordSettlement({
         externalPlatformTxId: gameSession.platformBetTxId,
-        winAmount: finalWinAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
+        winAmount: settlementAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
         settleType: 'cashout',
         settledAt: new Date(),
         balanceAfterSettlement: settleResult.balance
@@ -399,11 +439,35 @@ export class GamePlayService {
           : undefined,
         updatedBy: userId,
       });
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(
         `Cashout settlement failed: user=${userId} txId=${gameSession.platformBetTxId}`,
         error,
       );
+
+      // Log error to database
+      try {
+        await this.walletErrorService.createError({
+          agentId: gameSession.agentId,
+          userId,
+          apiAction: WalletApiAction.SETTLE_BET,
+          errorType: WalletErrorType.UNKNOWN_ERROR,
+          errorMessage: error.message || ERROR_MESSAGES.SETTLEMENT_FAILED,
+          errorStack: error.stack,
+          platformTxId: gameSession.platformBetTxId,
+          roundId: gameSession.roundId,
+          betAmount: gameSession.betAmount,
+          winAmount: settlementAmount,
+          currency: gameSession.currency,
+          rawError: JSON.stringify(error),
+        });
+      } catch (logError) {
+        this.logger.error(
+          `Failed to log cashout settlement error to database: ${logError}`,
+        );
+      }
+
+      throw new Error(ERROR_MESSAGES.SETTLEMENT_FAILED);
     }
 
     return this.sendStepResponse(
@@ -489,7 +553,6 @@ export class GamePlayService {
       coeff: multiplier.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
       difficulty: String(difficulty),
       currency,
-      endReason,
       collisionPositions: collisionColumns?.map(String),
     };
   }
@@ -558,30 +621,26 @@ export class GamePlayService {
       const coeffRaw = await this.safeGetConfig('coefficients');
       const betConfig = this.tryParseJson(betConfigRaw) || {};
       const coefficients = this.tryParseJson(coeffRaw) || {};
-      return [
-        {
-          betConfig,
-          coefficients,
-          lastWin: {
-            username: 'Salmon Delighted Loon',
-            winAmount: '306.00',
-            currency: 'USD',
-          },
-        },
-      ];
+      return {
+        betConfig,
+        coefficients,
+        lastWin: {
+          username: 'Salmon Delighted Loon',
+          winAmount: '306.00',
+          currency: 'USD',
+        }
+      }
     } catch (e) {
       this.logger.error(`Failed building game config payload: ${e}`);
-      return [
-        {
-          betConfig: {},
-          coefficients: {},
-          lastWin: {
-            username: 'UNKNOWN',
-            winAmount: '0',
-            currency: 'INR',
-          },
+      return {
+        betConfig: {},
+        coefficients: {},
+        lastWin: {
+          username: 'UNKNOWN',
+          winAmount: '0',
+          currency: 'INR',
         },
-      ];
+      }
     }
   }
 

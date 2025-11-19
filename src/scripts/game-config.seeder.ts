@@ -2,6 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GameConfig } from '../entities/game-config.entity';
+import { Difficulty } from '../routes/gamePlay/DTO/bet-payload.dto';
 
 @Injectable()
 export class GameConfigSeeder implements OnApplicationBootstrap {
@@ -122,6 +123,20 @@ export class GameConfigSeeder implements OnApplicationBootstrap {
           '233448.29',
           '2542251.93',
         ],
+      }),
+    );
+
+    await this.ensure(
+      'hazardConfig',
+      JSON.stringify({
+        totalColumns: 15,
+        hazardRefreshMs: 5000,
+        hazards: {
+          [Difficulty.EASY]: 3,
+          [Difficulty.MEDIUM]: 4,
+          [Difficulty.HARD]: 5,
+          [Difficulty.DAREDEVIL]: 7,
+        },
       }),
     );
 

@@ -8,12 +8,10 @@ dist
 build
 *.tsbuildinfo
 
-# Environment files
+# Environment files (will be passed via env_file in docker-compose)
 .env
 .env.local
 .env.*.local
-.env.production
-.env.development
 
 # IDE
 .vscode
@@ -30,6 +28,21 @@ Thumbs.db
 .git
 .gitignore
 
+# Documentation
+*.md
+docs
+
+# Test files
+test
+*.spec.ts
+*.test.ts
+coverage
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
 # Logs
 logs
 *.log
@@ -38,3 +51,4 @@ logs
 .cache
 .temp
 tmp
+

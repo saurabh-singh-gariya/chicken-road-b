@@ -1,10 +1,10 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { GameConfigModule } from '../gameConfig/game-config.module';
 import { RedisProvider } from './redis.provider';
 import { RedisService } from './redis.service';
 
 @Module({
-  imports: [GameConfigModule],
+  imports: [forwardRef(() => GameConfigModule)],
   providers: [RedisProvider, RedisService],
   exports: [RedisService],
 })

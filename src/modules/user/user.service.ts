@@ -96,8 +96,15 @@ export class UserService {
     return this.repo.find({ where: { agentId } });
   }
 
-  async findOne(userId: string, agentId: string): Promise<User | null> {
-    return this.repo.findOne({ where: this.compositeWhere(userId, agentId) });
+  async findOne(userId: string, agentId: string): Promise<User> {
+    const user = await this.repo.findOne({ where: this.compositeWhere(userId, agentId) });
+    if (!user) {
+      this.logger.warn(
+        `User not found: ${userId} (agent: ${agentId})`,
+      );
+      throw new NotFoundException(ERROR_MESSAGES.USER_NOT_FOUND);
+    }
+    return user;
   }
 
   async findByUsername(username: string, agentId?: string): Promise<User[]> {
