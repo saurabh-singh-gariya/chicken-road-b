@@ -38,3 +38,6 @@ logs
 .cache
 .temp
 tmp
+
+# Commands reference (local only)
+COMMANDS.txt

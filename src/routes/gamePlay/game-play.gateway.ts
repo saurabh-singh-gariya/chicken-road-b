@@ -18,6 +18,7 @@ import { GameAction, GameActionDto } from './DTO/game-action.dto';
 import { GamePlayService } from './game-play.service';
 import { SingleWalletFunctionsService } from '../single-wallet-functions/single-wallet-functions.service';
 import { UserService } from '../../modules/user/user.service';
+import { LastWinBroadcasterService } from '../../modules/last-win/last-win-broadcaster.service';
 
 const WS_EVENTS = {
   CONNECTION_ERROR: 'connection-error',
@@ -79,6 +80,7 @@ export class GamePlayGateway
     private readonly gamePlayService: GamePlayService,
     private readonly singleWalletFunctionsService: SingleWalletFunctionsService,
     private readonly userService: UserService,
+    private readonly lastWinBroadcasterService: LastWinBroadcasterService,
   ) { }
 
   async handleConnection(client: Socket) {
@@ -287,6 +289,9 @@ export class GamePlayGateway
   }
 
   afterInit(server: Server) {
+    // Start broadcasting last-win notifications
+    this.lastWinBroadcasterService.startBroadcasting(server);
+
     server.on('connection', (sock: Socket) => {
       const ackHandler = (data: any, ack?: Function) => {
         if (typeof ack !== 'function') return;
