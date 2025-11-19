@@ -68,8 +68,7 @@ interface MyDataEvent {
 
 @WebSocketGateway({ cors: true, path: '/io/' })
 export class GamePlayGateway
-  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit
-{
+  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer()
   server: Server;
 
@@ -80,7 +79,7 @@ export class GamePlayGateway
     private readonly gamePlayService: GamePlayService,
     private readonly singleWalletFunctionsService: SingleWalletFunctionsService,
     private readonly userService: UserService,
-  ) {}
+  ) { }
 
   async handleConnection(client: Socket) {
     const q: any = client.handshake.query;
@@ -166,7 +165,7 @@ export class GamePlayGateway
 
     const userData = await this.userService.findOne(userId, agentId);
 
-    const myData : MyDataEvent = {
+    const myData: MyDataEvent = {
       userId: userId,
       nickname: userData.username || userId,
       gameAvatar: userData?.avatar || null,
@@ -191,12 +190,15 @@ export class GamePlayGateway
     );
 
     // TEMPORARY: Clean up Redis and placed bets on disconnect
-    try {
-      await this.gamePlayService.cleanupOnDisconnect();
-    } catch (error) {
-      this.logger.error(
-        `Failed to cleanup on disconnect for client ${client.id}: ${error.message}`,
-      );
+    //only if environment is not production
+      if (process.env.APP_ENV !== 'production' && process.env.APP_ENV !== 'staging' && process.env.APP_ENV !== 'development') {
+        try {
+        await this.gamePlayService.cleanupOnDisconnect();
+      } catch (error) {
+        this.logger.error(
+          `Failed to cleanup on disconnect for client ${client.id}: ${error.message}`,
+        );
+      }
     }
   }
 
