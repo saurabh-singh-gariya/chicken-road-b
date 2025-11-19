@@ -33,11 +33,11 @@ echo -e "${GREEN}✅ Prerequisites check passed${NC}"
 
 # Stop existing containers
 echo -e "${YELLOW}🛑 Stopping existing containers...${NC}"
-docker compose -f docker-compose.prod.yml down || true
+docker compose -f docker-compose.prod.yml --env-file .env.production down || true
 
 # Build and start services
 echo -e "${YELLOW}🔨 Building and starting services...${NC}"
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 
 # Wait for services to be healthy
 echo -e "${YELLOW}⏳ Waiting for services to be healthy...${NC}"
@@ -47,15 +47,15 @@ sleep 10
 if docker ps | grep -q chicken-road-backend; then
     echo -e "${GREEN}✅ Application is running!${NC}"
     echo -e "${GREEN}📊 Container status:${NC}"
-    docker compose -f docker-compose.prod.yml ps
+    docker compose -f docker-compose.prod.yml --env-file .env.production ps
 else
     echo -e "${RED}❌ Error: Application failed to start!${NC}"
     echo -e "${YELLOW}📋 Checking logs...${NC}"
-    docker compose -f docker-compose.prod.yml logs app
+    docker compose -f docker-compose.prod.yml --env-file .env.production logs app
     exit 1
 fi
 
 echo -e "${GREEN}🎉 Deployment completed successfully!${NC}"
-echo -e "${YELLOW}📝 To view logs: docker compose -f docker-compose.prod.yml logs -f app${NC}"
-echo -e "${YELLOW}🛑 To stop: docker compose -f docker-compose.prod.yml down${NC}"
+echo -e "${YELLOW}📝 To view logs: docker compose -f docker-compose.prod.yml --env-file .env.production logs -f app${NC}"
+echo -e "${YELLOW}🛑 To stop: docker compose -f docker-compose.prod.yml --env-file .env.production down${NC}"
 
