@@ -108,15 +108,17 @@ server {
 }
 EOF
 
+# Remove any existing configs to avoid conflicts
+echo -e "${YELLOW}🧹 Cleaning up existing Nginx configs...${NC}"
+rm -f /etc/nginx/sites-enabled/*
+rm -f /etc/nginx/sites-available/chicken-road-backend
+
 # Copy config to system location
 mkdir -p /etc/nginx/sites-available
 cp nginx/nginx-selfsigned.conf /etc/nginx/sites-available/chicken-road-backend
 
 # Create symlink
-ln -sf /etc/nginx/sites-available/chicken-road-backend /etc/nginx/sites-enabled/
-
-# Remove default config if it exists
-rm -f /etc/nginx/sites-enabled/default
+ln -sf /etc/nginx/sites-available/chicken-road-backend /etc/nginx/sites-enabled/chicken-road-backend
 
 # Step 3: Test and reload Nginx
 echo -e "${YELLOW}🧪 Testing Nginx configuration...${NC}"
