@@ -7,8 +7,16 @@ import { ResponseTransformInterceptor } from './common/interceptors/response-tra
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
-    cors: true,
     logger: ['error', 'warn', 'log', 'debug'],
+  });
+
+  // Enable CORS for all routes
+  app.enableCors({
+    origin: true, // Allow all origins
+    credentials: true, // Allow credentials
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    exposedHeaders: ['Authorization'],
   });
 
   app.useGlobalFilters(new AllExceptionsFilter());

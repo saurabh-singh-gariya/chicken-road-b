@@ -67,7 +67,15 @@ interface MyDataEvent {
   gameAvatar: string | null;
 }
 
-@WebSocketGateway({ cors: true, path: '/io/' })
+@WebSocketGateway({
+  cors: {
+    origin: true, // Allow all origins
+    credentials: true, // Allow credentials
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+  },
+  path: '/io/',
+})
 export class GamePlayGateway
   implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer()
