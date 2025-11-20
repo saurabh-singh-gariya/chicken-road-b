@@ -16,6 +16,12 @@ services:
       - mysql_data:/var/lib/mysql
     networks:
       - chicken-road-network
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+        reservations:
+          memory: 200M
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
       interval: 10s
@@ -32,12 +38,18 @@ services:
       - redis_data:/data
     networks:
       - chicken-road-network
+    deploy:
+      resources:
+        limits:
+          memory: 100M
+        reservations:
+          memory: 50M
+    command: redis-server --appendonly yes --maxmemory 80mb --maxmemory-policy allkeys-lru
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
-    command: redis-server --appendonly yes
 
   app:
     build:
@@ -53,6 +65,7 @@ services:
       - DB_HOST=mysql
       - REDIS_HOST=redis
       - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=200
     depends_on:
       mysql:
         condition: service_healthy
@@ -60,6 +73,12 @@ services:
         condition: service_healthy
     networks:
       - chicken-road-network
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 150M
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
       interval: 30s
