@@ -19,6 +19,7 @@ import { CommonApiFunctionsModule } from './routes/common-api-functions/common-a
 import { GameApiRoutesModule } from './routes/game-api-routes/game-api-routes.module';
 import { GamePlayModule } from './routes/gamePlay/game-play.module';
 import { SingleWalletFunctionsModule } from './routes/single-wallet-functions/single-wallet-functions.module';
+import {HealthController} from './routes/extra/health.controller';
 
 @Module({
   imports: [
@@ -67,7 +68,7 @@ import { SingleWalletFunctionsModule } from './routes/single-wallet-functions/si
     GamePlayModule,
     SingleWalletFunctionsModule,
   ],
-  controllers: [],
+  controllers: [HealthController],
   providers: [],
 })
 export class AppModule {}
