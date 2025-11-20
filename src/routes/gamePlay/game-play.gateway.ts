@@ -193,14 +193,14 @@ export class GamePlayGateway
 
     // TEMPORARY: Clean up Redis and placed bets on disconnect
     //only if environment is not production
-      if (process.env.APP_ENV !== 'production' && process.env.APP_ENV !== 'staging' && process.env.APP_ENV !== 'development') {
-        try {
-        await this.gamePlayService.cleanupOnDisconnect();
-      } catch (error) {
-        this.logger.error(
-          `Failed to cleanup on disconnect for client ${client.id}: ${error.message}`,
-        );
-      }
+    // if (process.env.APP_ENV !== 'production' && process.env.APP_ENV !== 'staging' && process.env.APP_ENV !== 'development') {
+    try {
+      await this.gamePlayService.cleanupOnDisconnect();
+    } catch (error) {
+      this.logger.error(
+        `Failed to cleanup on disconnect for client ${client.id}: ${error.message}`,
+      );
+      // }
     }
   }
 

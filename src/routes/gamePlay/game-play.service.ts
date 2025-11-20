@@ -654,11 +654,11 @@ export class GamePlayService {
       await this.redisService.flushAll();
 
       this.logger.warn('[cleanupOnDisconnect] Deleting all PLACED bets...');
-      const deletedCount = await this.betService.deletePlacedBets();
+      // const deletedCount = await this.betService.deletePlacedBets();
 
-      this.logger.warn(
-        `[cleanupOnDisconnect] Cleanup complete - Redis flushed, ${deletedCount} PLACED bets deleted`,
-      );
+      // this.logger.warn(
+      //   `[cleanupOnDisconnect] Cleanup complete - Redis flushed, ${deletedCount} PLACED bets deleted`,
+      // );
     } catch (error) {
       this.logger.error(
         `[cleanupOnDisconnect] Cleanup failed: ${error.message}`,
