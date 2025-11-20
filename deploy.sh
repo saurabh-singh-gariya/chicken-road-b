@@ -41,17 +41,99 @@ docker compose -f docker-compose.prod.yml --env-file .env.production up -d --bui
 
 # Wait for services to be healthy
 echo -e "${YELLOW}⏳ Waiting for services to be healthy...${NC}"
-sleep 10
 
-# Check if app is running
-if docker ps | grep -q chicken-road-backend; then
-    echo -e "${GREEN}✅ Application is running!${NC}"
-    echo -e "${GREEN}📊 Container status:${NC}"
-    docker compose -f docker-compose.prod.yml --env-file .env.production ps
+# Wait for MySQL and Redis to be healthy (they should already be healthy from depends_on)
+echo -e "${YELLOW}   Waiting for MySQL and Redis...${NC}"
+max_wait=60
+elapsed=0
+while [ $elapsed -lt $max_wait ]; do
+    mysql_status=$(docker inspect --format='{{.State.Health.Status}}' chicken-road-mysql 2>/dev/null || echo "unknown")
+    redis_status=$(docker inspect --format='{{.State.Health.Status}}' chicken-road-redis 2>/dev/null || echo "unknown")
+    
+    if [ "$mysql_status" = "healthy" ] && [ "$redis_status" = "healthy" ]; then
+        echo -e "${GREEN}   ✅ MySQL and Redis are healthy${NC}"
+        break
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+    echo -n "."
+done
+echo ""
+
+# Wait for app container to be running
+echo -e "${YELLOW}   Waiting for app container to start...${NC}"
+max_wait=30
+elapsed=0
+while [ $elapsed -lt $max_wait ]; do
+    if docker ps | grep -q chicken-road-backend; then
+        echo -e "${GREEN}   ✅ App container is running${NC}"
+        break
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+    echo -n "."
+done
+echo ""
+
+# Wait for app health check (health check has 40s start_period + retries)
+echo -e "${YELLOW}   Waiting for app health check (this may take up to 90 seconds)...${NC}"
+max_wait=90
+elapsed=0
+health_passed=false
+
+while [ $elapsed -lt $max_wait ]; do
+    # Check if container is running
+    if ! docker ps | grep -q chicken-road-backend; then
+        echo -e "\n${RED}❌ App container stopped!${NC}"
+        echo -e "${YELLOW}📋 Checking logs...${NC}"
+        docker compose -f docker-compose.prod.yml --env-file .env.production logs --tail=50 app
+        exit 1
+    fi
+    
+    # Check health status
+    health_status=$(docker inspect --format='{{.State.Health.Status}}' chicken-road-backend 2>/dev/null || echo "starting")
+    
+    if [ "$health_status" = "healthy" ]; then
+        echo -e "\n${GREEN}   ✅ App is healthy!${NC}"
+        health_passed=true
+        break
+    elif [ "$health_status" = "unhealthy" ]; then
+        echo -e "\n${RED}❌ App health check failed!${NC}"
+        echo -e "${YELLOW}📋 Checking logs...${NC}"
+        docker compose -f docker-compose.prod.yml --env-file .env.production logs --tail=50 app
+        exit 1
+    fi
+    
+    sleep 5
+    elapsed=$((elapsed + 5))
+    echo -n "."
+done
+echo ""
+
+# Final check
+if [ "$health_passed" = false ]; then
+    echo -e "${YELLOW}⚠️  Health check timeout, but checking if app is responding...${NC}"
+    
+    # Try to hit the health endpoint directly
+    sleep 2
+    if curl -f http://localhost:3000/health > /dev/null 2>&1; then
+        echo -e "${GREEN}✅ App is responding on /health endpoint!${NC}"
+        health_passed=true
+    else
+        echo -e "${YELLOW}⚠️  Health endpoint not responding, but container is running${NC}"
+        echo -e "${YELLOW}📋 Checking logs...${NC}"
+        docker compose -f docker-compose.prod.yml --env-file .env.production logs --tail=30 app
+    fi
+fi
+
+# Show final status
+echo -e "${GREEN}📊 Container status:${NC}"
+docker compose -f docker-compose.prod.yml --env-file .env.production ps
+
+if [ "$health_passed" = true ] || docker ps | grep -q chicken-road-backend; then
+    echo -e "${GREEN}✅ Application deployment completed!${NC}"
 else
-    echo -e "${RED}❌ Error: Application failed to start!${NC}"
-    echo -e "${YELLOW}📋 Checking logs...${NC}"
-    docker compose -f docker-compose.prod.yml --env-file .env.production logs app
+    echo -e "${RED}❌ Application may not be fully healthy. Check logs above.${NC}"
     exit 1
 fi
 
