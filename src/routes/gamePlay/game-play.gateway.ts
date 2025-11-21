@@ -216,73 +216,73 @@ export class GamePlayGateway
     }
   }
 
-  @SubscribeMessage(WS_EVENTS.GAME_SERVICE)
-  async handleGameService(
-    @MessageBody() data: GameActionDto,
-    @ConnectedSocket() client: Socket,
-  ) {
-    const rawAction: string | undefined = data?.action;
+  // @SubscribeMessage(WS_EVENTS.GAME_SERVICE)
+  // async handleGameService(
+  //   @MessageBody() data: GameActionDto,
+  //   @ConnectedSocket() client: Socket,
+  // ) {
+  //   const rawAction: string | undefined = data?.action;
 
-    if (!rawAction) {
-      client.emit(WS_EVENTS.GAME_SERVICE, {
-        error: ERROR_RESPONSES.MISSING_ACTION,
-      });
-      return;
-    }
+  //   if (!rawAction) {
+  //     client.emit(WS_EVENTS.GAME_SERVICE, {
+  //       error: ERROR_RESPONSES.MISSING_ACTION,
+  //     });
+  //     return;
+  //   }
 
-    if (rawAction === 'get-game-config') {
-      const payload = await this.gamePlayService.getGameConfigPayload();
-      this.logger.log(`Emitting game config (event) to ${client.id}`);
-      client.emit(WS_EVENTS.GAME_SERVICE, payload);
-      return;
-    }
-    const knownPlaceholders: GameAction[] = [
-      GameAction.WITHDRAW,
-      GameAction.CASHOUT,
-      GameAction.GET_GAME_SESSION,
-      GameAction.GET_GAME_SEEDS,
-      GameAction.SET_USER_SEED,
-    ];
+  //   if (rawAction === 'get-game-config') {
+  //     const payload = await this.gamePlayService.getGameConfigPayload();
+  //     this.logger.log(`Emitting game config (event) to ${client.id}`);
+  //     client.emit(WS_EVENTS.GAME_SERVICE, payload);
+  //     return;
+  //   }
+  //   const knownPlaceholders: GameAction[] = [
+  //     GameAction.WITHDRAW,
+  //     GameAction.CASHOUT,
+  //     GameAction.GET_GAME_SESSION,
+  //     GameAction.GET_GAME_SEEDS,
+  //     GameAction.SET_USER_SEED,
+  //   ];
 
-    if (rawAction === GameAction.BET) {
-      // Do not emit bet response via event; rely solely on ACK for protocol consistency
-      this.logger.debug(
-        `Bet action event received from ${client.id}; deferring to ACK handler.`,
-      );
-      return;
-    }
+  //   if (rawAction === GameAction.BET) {
+  //     // Do not emit bet response via event; rely solely on ACK for protocol consistency
+  //     this.logger.debug(
+  //       `Bet action event received from ${client.id}; deferring to ACK handler.`,
+  //     );
+  //     return;
+  //   }
 
-    if (
-      rawAction === GameAction.STEP ||
-      rawAction === GameAction.CASHOUT ||
-      rawAction === GameAction.GET_GAME_SESSION
-    ) {
-      // Event path does not emit responses for these; rely on ACK only
-      this.logger.debug(
-        `Event received for ${rawAction} from ${client.id}; deferring to ACK.`,
-      );
-      return;
-    }
-    if (knownPlaceholders.includes(rawAction as GameAction)) {
-      const placeholder = this.gamePlayService.buildPlaceholder(
-        rawAction,
-        data?.payload,
-      );
-      this.logger.debug(
-        `Placeholder action response -> ${rawAction} for client ${client.id}`,
-      );
-      client.emit(WS_EVENTS.GAME_SERVICE, placeholder);
-      return;
-    }
+  //   if (
+  //     rawAction === GameAction.STEP ||
+  //     rawAction === GameAction.CASHOUT ||
+  //     rawAction === GameAction.GET_GAME_SESSION
+  //   ) {
+  //     // Event path does not emit responses for these; rely on ACK only
+  //     this.logger.debug(
+  //       `Event received for ${rawAction} from ${client.id}; deferring to ACK.`,
+  //     );
+  //     return;
+  //   }
+  //   if (knownPlaceholders.includes(rawAction as GameAction)) {
+  //     const placeholder = this.gamePlayService.buildPlaceholder(
+  //       rawAction,
+  //       data?.payload,
+  //     );
+  //     this.logger.debug(
+  //       `Placeholder action response -> ${rawAction} for client ${client.id}`,
+  //     );
+  //     client.emit(WS_EVENTS.GAME_SERVICE, placeholder);
+  //     return;
+  //   }
 
-    this.logger.warn(
-      `Unknown game action "${rawAction}" from client ${client.id}`,
-    );
-    client.emit(WS_EVENTS.GAME_SERVICE, {
-      action: rawAction,
-      status: ERROR_RESPONSES.UNSUPPORTED_ACTION,
-    });
-  }
+  //   this.logger.warn(
+  //     `Unknown game action "${rawAction}" from client ${client.id}`,
+  //   );
+  //   client.emit(WS_EVENTS.GAME_SERVICE, {
+  //     action: rawAction,
+  //     status: ERROR_RESPONSES.UNSUPPORTED_ACTION,
+  //   });
+  // }
 
   @SubscribeMessage(WS_EVENTS.PING)
   async handlePing(@ConnectedSocket() client: Socket) {
