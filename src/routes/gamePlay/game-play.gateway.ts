@@ -326,6 +326,7 @@ export class GamePlayGateway
           GameAction.GET_GAME_SESSION,
           GameAction.GET_GAME_SEEDS,
           GameAction.SET_USER_SEED,
+          GameAction.GET_GAME_STATE
         ];
 
         if (rawAction === GameAction.BET) {
@@ -444,9 +445,7 @@ export class GamePlayGateway
         }
 
         if (knownPlaceholders.includes(rawAction as GameAction)) {
-          return ack(
-            this.gamePlayService.buildPlaceholder(rawAction, data?.payload),
-          );
+          return ack(null);
         }
         return ack(
           {

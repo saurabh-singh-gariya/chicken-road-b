@@ -12,6 +12,7 @@ export enum GameAction {
   GET_GAME_CONFIG = 'get-game-config',
   GET_GAME_SEEDS = 'get-game-seeds',
   SET_USER_SEED = 'set-user-seed',
+  GET_GAME_STATE = 'get-game-state'
 }
 
 export class GameActionDto {
