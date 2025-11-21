@@ -25,6 +25,7 @@ const WS_EVENTS = {
   BALANCE_CHANGE: 'onBalanceChange',
   BET_CONFIG: 'betConfig',
   MY_DATA: 'myData',
+  CURRENCIES: 'currencies',
   GAME_SERVICE: 'gameService',
   BETS_RANGES: 'betsRanges',
   GAME_PLAY_SERVICE: 'gamePlayService',
@@ -181,10 +182,13 @@ export class GamePlayGateway
       gameAvatar: userData?.avatar || null,
     };
 
+    const currencies = await this.gamePlayService.getCurrencies();
+
     client.emit(WS_EVENTS.BALANCE_CHANGE, balance);
     client.emit(WS_EVENTS.BETS_RANGES, betsRanges);
     client.emit(WS_EVENTS.BET_CONFIG, betConfig);
     client.emit(WS_EVENTS.MY_DATA, myData);
+    client.emit(WS_EVENTS.CURRENCIES, currencies);
 
     this.logger.log(
       `GamePlay socket connected id=${client.id} userId=${userId} agentId=${agentId} gameMode=${gameMode} operatorId=${operatorId}`,
