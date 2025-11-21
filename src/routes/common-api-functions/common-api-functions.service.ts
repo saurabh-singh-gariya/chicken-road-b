@@ -167,7 +167,14 @@ export class CommonApiFunctionsService {
       `[loginMember] Generating JWT token - userId: ${userId}, agentId: ${agentId}, host: ${host}`,
     );
     const token = await this.jwtTokenService.signUserToken(userId, agentId);
-    const url = `https://${host}/player/login/apiLogin0?agentId=${encodeURIComponent(agentId)}&x=${encodeURIComponent(token)}`;
+    
+    // Build URL with new format
+    const gameMode = 'chicken-road-two';
+    const lang = existing.language || 'en';
+    const currency = existing.currency || 'INR';
+    const adaptive = 'true';
+    
+    const url = `https://${host}/index.html?gameMode=${encodeURIComponent(gameMode)}&operatorId=${encodeURIComponent(agentId)}&lang=${encodeURIComponent(lang)}&currency=${encodeURIComponent(currency)}&adaptive=${encodeURIComponent(adaptive)}&authToken=${encodeURIComponent(token)}`;
 
     this.logger.log(
       `[loginMember] SUCCESS - Login URL generated for userId: ${userId}, agentId: ${agentId}`,
@@ -288,6 +295,6 @@ export class CommonApiFunctionsService {
     }
 
     this.logger.debug(`[resolveHost] Using default host: localhost`);
-    return 'localhost';
+    return 'gscr.chicken-road-twoinout.live';
   }
 }
