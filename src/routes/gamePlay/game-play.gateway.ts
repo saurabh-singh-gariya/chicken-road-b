@@ -321,7 +321,7 @@ export class GamePlayGateway
         this.logger.debug(`✅ Sent manual ack via conn.packet with callbackId: ${callbackId}`);
         return;
       }
-      
+
       // Method 2: Use socket's packet method directly
       // @ts-ignore
       if (typeof sock.packet === 'function') {
@@ -334,7 +334,7 @@ export class GamePlayGateway
         this.logger.debug(`✅ Sent manual ack via sock.packet with callbackId: ${callbackId}`);
         return;
       }
-      
+
       // Method 3: Manually encode and send via engine (last resort)
       // @ts-ignore
       const engine = sock.conn?.transport?.socket || sock.conn?.transport?.ws || sock.conn?.transport;
@@ -364,21 +364,21 @@ export class GamePlayGateway
       // @ts-ignore - trying to access closure
       const ackString = ackFunction.toString();
       this.logger.debug(`Ack function structure: ${ackString.substring(0, 200)}...`);
-      
+
       // Method 2: Check if ack function has properties set by Socket.IO
       // @ts-ignore
       if (ackFunction.id !== undefined) {
         // @ts-ignore
         return { id: ackFunction.id, packetMethod: null };
       }
-      
+
       // Method 3: Try to extract from ack function's bound context
       // @ts-ignore
       if (ackFunction._id !== undefined) {
         // @ts-ignore
         return { id: ackFunction._id, packetMethod: null };
       }
-      
+
       // Method 4: Create a wrapper that captures id and self before first call
       // We'll call the ack function in a try-catch and inspect what happens
       return { id: null, packetMethod: null };
@@ -397,7 +397,7 @@ export class GamePlayGateway
       // Method 1: Check socket's internal ack callbacks map
       // @ts-ignore - accessing internal Socket.IO properties
       const ackCallbacks = sock._callbacks || sock.ackCallbacks || (sock as any).acks || (sock as any)._acks;
-      
+
       if (ackCallbacks && typeof ackCallbacks === 'object') {
         // Find the callback ID by matching the ack function
         for (const [id, callback] of Object.entries(ackCallbacks)) {
@@ -408,7 +408,7 @@ export class GamePlayGateway
           }
         }
       }
-      
+
       // Method 2: Check socket's _ids map (Socket.IO stores callback IDs here)
       // @ts-ignore
       const ids = (sock as any)._ids || (sock as any).ids;
@@ -420,14 +420,14 @@ export class GamePlayGateway
           }
         }
       }
-      
+
       // Method 3: Check if ack function has id property
       // @ts-ignore
       if (ackFunction.id !== undefined && typeof ackFunction.id === 'number') {
         // @ts-ignore
         return ackFunction.id;
       }
-      
+
       this.logger.warn('Could not extract callback ID using standard methods');
       return null;
     } catch (error) {
@@ -441,61 +441,11 @@ export class GamePlayGateway
     this.lastWinBroadcasterService.startBroadcasting(server);
 
     server.on('connection', (sock: Socket) => {
-      // Intercept packets at connection level to capture callback IDs
-      // @ts-ignore - accessing internal Socket.IO connection
-      if (sock.conn && sock.conn.onpacket) {
-        // @ts-ignore
-        const originalOnPacket = sock.conn.onpacket.bind(sock.conn);
-        // @ts-ignore
-        sock.conn.onpacket = (packet: any) => {
-          // If this is an EVENT packet (type 2) with a callback ID for gameService
-          if (packet && packet.type === 2 && packet.id !== undefined && packet.data && packet.data[0] === WS_EVENTS.GAME_SERVICE) {
-            // Store the callback ID on the socket for later use
-            // @ts-ignore
-            sock._pendingCallbackId = packet.id;
-            // @ts-ignore
-            sock._pendingPacketMethod = sock.conn.packet.bind(sock.conn);
-            this.logger.debug(`✅ Intercepted gameService packet with callback ID: ${packet.id}`);
-          }
-          // Call original handler
-          originalOnPacket(packet);
-        };
-      }
-      
-      const ackHandler = (data: any, ack?: Function , ...rest: any[]) => {
-        // log the argument and ack function
+      const ackHandler = (data: any, ack?: Function, ...rest: any[]) => {
         this.logger.log(`ACK handler called with data: ${JSON.stringify(data)} and ack function: ${ack}`);
         this.logger.log(`REST args: ${JSON.stringify(rest)}`);
         if (typeof ack !== 'function') return;
-        
-        // Get callback ID from intercepted packet (stored by onpacket interceptor)
-        // @ts-ignore
-        let callbackId: number | null | undefined = sock._pendingCallbackId;
-        // @ts-ignore
-        let packetMethod: any = sock._pendingPacketMethod;
-        
-        // If not found from interceptor, try extraction methods
-        if (!callbackId) {
-          callbackId = this.extractCallbackId(sock, ack);
-          // @ts-ignore
-          if (!packetMethod && sock.conn && typeof sock.conn.packet === 'function') {
-            // @ts-ignore
-            packetMethod = sock.conn.packet.bind(sock.conn);
-          }
-        }
-        
-        // Store for use in handlers (especially STEP handler for double ack)
-        // @ts-ignore
-        sock._currentAckInfo = { callbackId, packetMethod, ackFunction: ack };
-        
-        // Clear pending values after storing
-        // @ts-ignore
-        if (sock._pendingCallbackId !== undefined) {
-          // @ts-ignore
-          delete sock._pendingCallbackId;
-          // @ts-ignore
-          delete sock._pendingPacketMethod;
-        }
+
         const rawAction: string | undefined = data?.action;
         if (!rawAction) return ack({ error: ERROR_RESPONSES.MISSING_ACTION });
 
@@ -576,58 +526,9 @@ export class GamePlayGateway
                   balance: walletBalance.balance.toString(),
                 };
                 sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
-                
-                // Get callback ID and packet method from stored ack info (set by ackHandler)
-                // @ts-ignore
-                const ackInfo = sock._currentAckInfo;
-                let callbackId: number | null | undefined = ackInfo?.callbackId;
-                let packetMethod: any = ackInfo?.packetMethod;
-                
-                // If not in stored info, try to extract it
-                if (!callbackId) {
-                  callbackId = this.extractCallbackId(sock, ack);
-                  // @ts-ignore
-                  if (!packetMethod && sock.conn && typeof sock.conn.packet === 'function') {
-                    // @ts-ignore
-                    packetMethod = sock.conn.packet.bind(sock.conn);
-                  }
-                }
-                
-                this.logger.debug(`Using callback ID: ${callbackId}, has packetMethod: ${!!packetMethod} for step (isFinished: true)`);
-                
-                // Send first acknowledgement
                 ack(r);
-                
-                // Send second acknowledgement manually with same callback ID (mimicking actual app)
-                if (callbackId !== null && callbackId !== undefined) {
-                  // Small delay to ensure first ack is sent
-                  setTimeout(() => {
-                    if (packetMethod) {
-                      // Use the intercepted packet method
-                      try {
-                        packetMethod({
-                          type: 3, // ACK type
-                          id: callbackId,
-                          data: [r],
-                          nsp: sock.nsp.name,
-                        });
-                        this.logger.debug(`✅ Sent second ack using packet method with callbackId: ${callbackId}`);
-                      } catch (e) {
-                        this.logger.error(`Failed to use packet method: ${e}, trying fallback`);
-                        this.sendManualAck(sock, callbackId as number, r);
-                      }
-                    } else {
-                      // Fallback: use manual method
-                      this.sendManualAck(sock, callbackId as number, r);
-                      this.logger.debug(`Sent second manual ack with callbackId: ${callbackId}`);
-                    }
-                  }, 10);
-                } else {
-                  this.logger.warn('❌ Could not extract callback ID, cannot send second ack');
-                }
-                
                 this.logger.debug(
-                  `Emitted onBalanceChange and duplicate acknowledgement after step (finished): balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}, callbackId=${callbackId}`,
+                  `Emitted onBalanceChange and duplicate acknowledgement after step (finished): balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
                 );
               } else {
                 ack(r);
