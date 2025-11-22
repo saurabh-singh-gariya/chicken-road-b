@@ -380,7 +380,7 @@ export class GamePlayService {
       gameSession.difficulty,
       gameSession.currency,
       endReason,
-      endReason === 'hazard' ? [lineNumber] : undefined,
+      endReason === 'hazard' ? hazardColumns : undefined,
     );
   }
 
@@ -396,7 +396,7 @@ export class GamePlayService {
     }
 
     gameSession.isActive = false;
-    gameSession.isWin = false;
+    gameSession.isWin = true;
 
     const currentMultiplier =
       gameSession.currentStep >= 0
@@ -544,17 +544,33 @@ export class GamePlayService {
     endReason?: 'win' | 'cashout' | 'hazard',
     collisionColumns?: number[],
   ): BetStepResponse {
-    return {
+    const response: BetStepResponse = {
       isFinished: !isActive,
-      isWin,
       lineNumber: currentStep,
       winAmount: winAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
       betAmount: betAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
       coeff: multiplier.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
       difficulty: String(difficulty),
       currency,
-      collisionPositions: collisionColumns,
     };
+
+    // For win or cashout: include isWin: true and collisionPositions with final position
+    if (endReason && (endReason === 'win' || endReason === 'cashout')) {
+      response.isWin = true;
+      response.collisionPositions = [GAME_CONSTANTS.TOTAL_COLUMNS];
+    }
+    // For hazard: do NOT include isWin, but include collisionPositions
+    else if (endReason && endReason === 'hazard') {
+      response.collisionPositions = collisionColumns;
+    }
+    // For simple step (no endReason): include isWin: false
+    else {
+      if (collisionColumns) {
+        response.collisionPositions = collisionColumns;
+      }
+    }
+
+    return response;
   }
 
   buildPlaceholder(action: string, payload: any) {
