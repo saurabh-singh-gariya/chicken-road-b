@@ -45,7 +45,7 @@ export interface BetStepResponse {
   lineNumber?: number;
   isWin?: boolean;
   endReason?: string;
-  collisionPositions?: string[];
+  collisionPositions?: number[];
 }
 
 type GameConfigPayload =
@@ -553,7 +553,7 @@ export class GamePlayService {
       coeff: multiplier.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
       difficulty: String(difficulty),
       currency,
-      collisionPositions: collisionColumns?.map(String),
+      collisionPositions: collisionColumns,
     };
   }
 
