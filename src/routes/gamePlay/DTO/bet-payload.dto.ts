@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEnum, IsNotEmpty, IsNumberString, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsNumberString, IsOptional, IsString } from 'class-validator';
 
 export enum Difficulty {
   EASY = 'EASY',
@@ -38,7 +38,10 @@ export class BetPayloadDto {
   @ApiProperty({
     example: 'IN',
     description: 'Country code of the user placing the bet',
+    required: false,
+    nullable: true,
   })
   @IsString()
-  countryCode?: string;
+  @IsOptional()
+  countryCode?: string | null;
 }
