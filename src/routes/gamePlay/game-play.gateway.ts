@@ -308,7 +308,7 @@ export class GamePlayGateway
       const ackHandler = (data: any, ack?: Function) => {
 
         // log the argument and ack function
-        this.logger.log(`ACK handler called with data: ${JSON.stringify(data)} and ack function: ${JSON.stringify(ack)}`);
+        this.logger.log(`ACK handler called with data: ${JSON.stringify(data)} and ack function: ${ack}`);
         if (typeof ack !== 'function') return;
         const rawAction: string | undefined = data?.action;
         if (!rawAction) return ack({ error: ERROR_RESPONSES.MISSING_ACTION });
