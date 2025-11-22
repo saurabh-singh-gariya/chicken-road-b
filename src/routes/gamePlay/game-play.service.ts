@@ -557,7 +557,7 @@ export class GamePlayService {
     // For win or cashout: include isWin: true and collisionPositions with final position
     if (endReason && (endReason === 'win' || endReason === 'cashout')) {
       response.isWin = true;
-      response.collisionPositions = [GAME_CONSTANTS.TOTAL_COLUMNS];
+      response.collisionPositions = collisionColumns;
     }
     // For hazard: do NOT include isWin, but include collisionPositions
     else if (endReason && endReason === 'hazard') {
