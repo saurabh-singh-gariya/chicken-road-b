@@ -801,8 +801,16 @@ export class GamePlayService {
       const coeffRaw = await this.safeGetConfig('coefficients');
       const betConfig = this.tryParseJson(betConfigRaw) || {};
       const coefficients = this.tryParseJson(coeffRaw) || {};
+      let newBetConfig = betConfig;
+      try {
+        const { currency, decimalPlaces, ...rest } = betConfig;
+        newBetConfig = rest;
+      } catch (e) {
+        this.logger.error(`Failed to parse bet config: ${e}`);
+      }
+
       return {
-        betConfig,
+        betConfig: newBetConfig,
         coefficients,
         lastWin: {
           username: 'Salmon Delighted Loon',

@@ -23,7 +23,7 @@ import { LastWinBroadcasterService } from '../../modules/last-win/last-win-broad
 const WS_EVENTS = {
   CONNECTION_ERROR: 'connection-error',
   BALANCE_CHANGE: 'onBalanceChange',
-  BET_CONFIG: 'betConfig',
+  BET_CONFIG: 'betsConfig',
   MY_DATA: 'myData',
   CURRENCIES: 'currencies',
   GAME_SERVICE: 'gameService',
@@ -309,12 +309,15 @@ export class GamePlayGateway
         if (typeof ack !== 'function') return;
         const rawAction: string | undefined = data?.action;
         if (!rawAction) return ack({ error: ERROR_RESPONSES.MISSING_ACTION });
+
         if (rawAction === GameAction.GET_GAME_CONFIG) {
           this.gamePlayService
             .getGameConfigPayload()
             .then((payload) => {
               this.logger.log(`Returning game config (ACK) to ${sock.id}`);
-              ack(payload);
+              //from the payload delete the betConfig key and for decimalPlaces, return null
+              const { betConfig, ...rest } = payload;
+              ack({ ...rest });
             })
             .catch((e) => {
               this.logger.error(`ACK game config failed: ${e}`);
