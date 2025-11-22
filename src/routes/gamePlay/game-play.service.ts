@@ -470,6 +470,10 @@ export class GamePlayService {
       throw new Error(ERROR_MESSAGES.SETTLEMENT_FAILED);
     }
 
+    let hazardColumns = await this.hazardSchedulerService.getActiveHazards(
+        gameSession.difficulty,
+      );
+
     return this.sendStepResponse(
       gameSession.isActive,
       gameSession.isWin,
@@ -480,6 +484,7 @@ export class GamePlayService {
       gameSession.difficulty,
       gameSession.currency,
       'cashout',
+      hazardColumns
     );
   }
 
