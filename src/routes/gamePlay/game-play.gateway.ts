@@ -380,7 +380,6 @@ export class GamePlayGateway
           this.gamePlayService
             .performStepFlow(userId, agentId, lineNumber)
             .then(async (r) => {
-              ack(r);
               // Emit onBalanceChange after step when isFinished is true
               if (!('error' in r) && r.isFinished) {
                 const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
@@ -393,6 +392,8 @@ export class GamePlayGateway
                   `Emitted onBalanceChange after step (finished): balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
                 );
               }
+              ack(r);
+              ack(r);
             })
             .catch((e) => {
               this.logger.error(`Step flow failed: ${e}`);
