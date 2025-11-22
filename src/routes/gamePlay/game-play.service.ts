@@ -380,7 +380,7 @@ export class GamePlayService {
       gameSession.difficulty,
       gameSession.currency,
       endReason,
-      endReason === 'hazard' ? hazardColumns : undefined,
+      endReason === 'hazard' ? [lineNumber] : undefined,
     );
   }
 
