@@ -376,7 +376,7 @@ export class GamePlayService {
       gameSession.currentStep,
       gameSession.winAmount,
       gameSession.betAmount,
-      currentMultiplier,
+      endReason === 'hazard' ? 0 : currentMultiplier,
       gameSession.difficulty,
       gameSession.currency,
       endReason,

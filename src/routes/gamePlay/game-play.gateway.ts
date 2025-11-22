@@ -380,7 +380,7 @@ export class GamePlayGateway
           this.gamePlayService
             .performStepFlow(userId, agentId, lineNumber)
             .then(async (r) => {
-              // Emit onBalanceChange after step when isFinished is true
+              // If isFinished is true, send acknowledgement twice (mimicking screenshot)
               if (!('error' in r) && r.isFinished) {
                 const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
                 const balanceEvent: BalanceEventPayload = {
@@ -388,12 +388,22 @@ export class GamePlayGateway
                   balance: walletBalance.balance.toString(),
                 };
                 sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
+                
+                // Send first acknowledgement
+                ack(r);
+                
+                // Attempt to send second acknowledgement immediately
+                // Note: Socket.IO typically only allows one ack, but attempting anyway
+                // The second call may be silently ignored by Socket.IO
+                ack(r);
+                
                 this.logger.debug(
-                  `Emitted onBalanceChange after step (finished): balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                  `Emitted onBalanceChange and attempted duplicate acknowledgement after step (finished): balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
                 );
+              } else {
+                // Normal case: send single acknowledgement
+                ack(r);
               }
-              ack(r);
-              ack(r);
             })
             .catch((e) => {
               this.logger.error(`Step flow failed: ${e}`);
