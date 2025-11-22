@@ -305,10 +305,11 @@ export class GamePlayGateway
     this.lastWinBroadcasterService.startBroadcasting(server);
 
     server.on('connection', (sock: Socket) => {
-      const ackHandler = (data: any, ack?: Function) => {
+      const ackHandler = (data: any, ack?: Function , ...rest: any[]) => {
 
         // log the argument and ack function
         this.logger.log(`ACK handler called with data: ${JSON.stringify(data)} and ack function: ${ack}`);
+        this.logger.log(`REST ${rest}`);
         if (typeof ack !== 'function') return;
         const rawAction: string | undefined = data?.action;
         if (!rawAction) return ack({ error: ERROR_RESPONSES.MISSING_ACTION });
@@ -383,6 +384,8 @@ export class GamePlayGateway
           this.gamePlayService
             .performStepFlow(userId, agentId, lineNumber)
             .then(async (r) => {
+
+              this.logger.log(`ACK FOR STEP FLOW: ${ack}`);
               if (!('error' in r) && r.isFinished) {
                 const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
                 const balanceEvent: BalanceEventPayload = {
