@@ -306,6 +306,9 @@ export class GamePlayGateway
 
     server.on('connection', (sock: Socket) => {
       const ackHandler = (data: any, ack?: Function) => {
+
+        // log the argument and ack function
+        this.logger.log(`ACK handler called with data: ${JSON.stringify(data)} and ack function: ${JSON.stringify(ack)}`);
         if (typeof ack !== 'function') return;
         const rawAction: string | undefined = data?.action;
         if (!rawAction) return ack({ error: ERROR_RESPONSES.MISSING_ACTION });
@@ -380,7 +383,6 @@ export class GamePlayGateway
           this.gamePlayService
             .performStepFlow(userId, agentId, lineNumber)
             .then(async (r) => {
-              // If isFinished is true, send acknowledgement twice (mimicking screenshot)
               if (!('error' in r) && r.isFinished) {
                 const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
                 const balanceEvent: BalanceEventPayload = {
@@ -388,20 +390,12 @@ export class GamePlayGateway
                   balance: walletBalance.balance.toString(),
                 };
                 sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
-                
-                // Send first acknowledgement
                 ack(r);
-                
-                // Attempt to send second acknowledgement immediately
-                // Note: Socket.IO typically only allows one ack, but attempting anyway
-                // The second call may be silently ignored by Socket.IO
                 ack(r);
-                
                 this.logger.debug(
                   `Emitted onBalanceChange and attempted duplicate acknowledgement after step (finished): balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
                 );
               } else {
-                // Normal case: send single acknowledgement
                 ack(r);
               }
             })
