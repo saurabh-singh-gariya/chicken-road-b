@@ -126,33 +126,33 @@ server {
     ssl_session_timeout 10m;
     ssl_session_tickets off;
 
-    # Security headers
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
+    # Main application
+    location / {
+        # Security headers
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
 
-    # CORS headers
-    add_header 'Access-Control-Allow-Origin' '*' always;
-    add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD' always;
-    add_header 'Access-Control-Allow-Headers' 'Content-Type, Authorization, Accept, Origin, X-Requested-With' always;
-    add_header 'Access-Control-Allow-Credentials' 'true' always;
-    add_header 'Access-Control-Max-Age' '86400' always;
-
-    # Handle CORS preflight
-    if (\$request_method = 'OPTIONS') {
+        # CORS headers
         add_header 'Access-Control-Allow-Origin' '*' always;
         add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD' always;
         add_header 'Access-Control-Allow-Headers' 'Content-Type, Authorization, Accept, Origin, X-Requested-With' always;
         add_header 'Access-Control-Allow-Credentials' 'true' always;
         add_header 'Access-Control-Max-Age' '86400' always;
-        add_header 'Content-Type' 'text/plain charset=UTF-8' always;
-        add_header 'Content-Length' '0' always;
-        return 204;
-    }
 
-    # Main application
-    location / {
+        # Handle CORS preflight
+        if (\$request_method = 'OPTIONS') {
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD' always;
+            add_header 'Access-Control-Allow-Headers' 'Content-Type, Authorization, Accept, Origin, X-Requested-With' always;
+            add_header 'Access-Control-Allow-Credentials' 'true' always;
+            add_header 'Access-Control-Max-Age' '86400' always;
+            add_header 'Content-Type' 'text/plain charset=UTF-8' always;
+            add_header 'Content-Length' '0' always;
+            return 204;
+        }
+
         proxy_pass http://backend;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
