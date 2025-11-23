@@ -17,8 +17,8 @@ async function bootstrap() {
 
   // Enable CORS for all routes
   app.enableCors({
-    origin: true, // Allow all origins
-    credentials: true, // Allow credentials
+    origin: '*', // Allow all origins explicitly
+    credentials: false, // Must be false when origin is '*'
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
     exposedHeaders: ['Authorization'],
