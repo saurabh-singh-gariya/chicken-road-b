@@ -31,7 +31,7 @@ export interface JwtConfig {
  * @remarks
  * Environment variables:
  * - JWT_SECRET: Secret key for signing tokens **CRITICAL: Set a strong secret in production**
- * - JWT_EXPIRES: Token expiration time (default: '1h')
+ * - JWT_EXPIRES or JWT_EXPIRES_IN: Token expiration time (default: '1h')
  *
  * Supported expiration formats: '1h', '7d', '30m', '1y', etc.
  *
@@ -41,6 +41,6 @@ export default registerAs(
   'jwt',
   (): JwtConfig => ({
     secret: process.env.JWT_SECRET || DEFAULTS.SECRET,
-    expiresIn: process.env.JWT_EXPIRES || DEFAULTS.EXPIRES_IN,
+    expiresIn: process.env.JWT_EXPIRES || process.env.JWT_EXPIRES_IN || DEFAULTS.EXPIRES_IN,
   }),
 );

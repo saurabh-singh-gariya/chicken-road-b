@@ -19,9 +19,16 @@ export class JwtTokenService {
   async signUserToken(
     userId: string,
     agentId: string,
-    ttlSeconds = 3600,
+    ttlSeconds?: number,
   ): Promise<string> {
     const secret = await this.gameConfigService.getJwtSecret();
+    let expiresIn: string | number;
+    if (ttlSeconds !== undefined) {
+      expiresIn = ttlSeconds;
+    } else {
+      expiresIn = await this.gameConfigService.getJwtExpires();
+    }
+    
     const payload: UserTokenPayload = {
       sub: userId,
       agentId,
@@ -30,7 +37,7 @@ export class JwtTokenService {
     return this.jwtService.sign(payload, {
       secret,
       algorithm: 'HS256',
-      expiresIn: ttlSeconds,
+      expiresIn: expiresIn as any,
     });
   }
 
@@ -44,9 +51,16 @@ export class JwtTokenService {
 
   async signGenericToken(
     payload: Record<string, any>,
-    ttlSeconds = 900,
+    ttlSeconds?: number,
   ): Promise<string> {
     const secret = await this.gameConfigService.getJwtSecret();
+    let expiresIn: string | number;
+    if (ttlSeconds !== undefined) {
+      expiresIn = ttlSeconds;
+    } else {
+      expiresIn = await this.gameConfigService.getJwtExpiresGeneric();
+    }
+    
     const base: Record<string, any> = {
       ...payload,
       iat: Math.floor(Date.now() / 1000),
@@ -54,7 +68,7 @@ export class JwtTokenService {
     return this.jwtService.sign(base, {
       secret,
       algorithm: 'HS256',
-      expiresIn: ttlSeconds,
+      expiresIn: expiresIn as any,
     });
   }
 }

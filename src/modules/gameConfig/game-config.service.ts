@@ -47,6 +47,44 @@ export class GameConfigService {
     return secret;
   }
 
+  async getJwtExpires(): Promise<string> {
+    try {
+      const expiresConfig = await this.getConfig('jwt.expires');
+      if (typeof expiresConfig === 'string') {
+        return expiresConfig;
+      }
+      if (expiresConfig && typeof expiresConfig === 'object' && expiresConfig.expiresIn) {
+        return expiresConfig.expiresIn;
+      }
+    } catch (e) {
+      const envExpires = process.env.JWT_EXPIRES || process.env.JWT_EXPIRES_IN;
+      if (envExpires) {
+        this.logger.debug('Using env JWT_EXPIRES (DB entry missing)');
+        return envExpires;
+      }
+      this.logger.debug('Using default JWT_EXPIRES (DB and env missing)');
+      return '1h';
+    }
+    const envExpires = process.env.JWT_EXPIRES || process.env.JWT_EXPIRES_IN;
+    return envExpires || '1h';
+  }
+
+  async getJwtExpiresGeneric(): Promise<string> {
+    try {
+      const expiresConfig = await this.getConfig('jwt.expires.generic');
+      if (typeof expiresConfig === 'string') {
+        return expiresConfig;
+      }
+      if (expiresConfig && typeof expiresConfig === 'object' && expiresConfig.expiresIn) {
+        return expiresConfig.expiresIn;
+      }
+    } catch (e) {
+      this.logger.debug('Using user token expiry for generic tokens (DB entry missing)');
+      return await this.getJwtExpires();
+    }
+    return await this.getJwtExpires();
+  }
+
   async setConfig(key: string, value: string): Promise<GameConfig> {
     let config = await this.configRepository.findOne({ where: { key } });
     if (config) {
