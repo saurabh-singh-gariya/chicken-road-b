@@ -66,6 +66,9 @@ services:
       - REDIS_HOST=redis
       - NODE_ENV=production
       - NODE_OPTIONS=--max-old-space-size=200
+      - LOG_DIR=/app/logs
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       mysql:
         condition: service_healthy

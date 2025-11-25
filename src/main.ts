@@ -1,4 +1,4 @@
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -6,16 +6,17 @@ import * as express from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exception.filter';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
+import { WinstonLoggerService } from './common/logger/winston-logger.service';
 
 async function bootstrap() {
+  const winstonLogger = new WinstonLoggerService();
+
   const app = await NestFactory.create(AppModule, {
-    logger: ['error', 'warn', 'log', 'debug'],
+    logger: winstonLogger,
   });
 
-  // Enable body parsing for x-www-form-urlencoded
   app.use(express.urlencoded({ extended: true }));
 
-  // Enable CORS for all routes
   app.enableCors({
     origin: '*', // Allow all origins explicitly
     credentials: false, // Must be false when origin is '*'
@@ -38,7 +39,7 @@ async function bootstrap() {
         description: 'Enter JWT token',
         in: 'header',
       },
-      'JWT-auth', // This name here is important for matching up with @ApiBearerAuth() in your controller!
+      'JWT-auth',
     )
     .addTag('app', 'Application endpoints')
     .addTag('health', 'Health check endpoints')
@@ -67,10 +68,11 @@ async function bootstrap() {
   const enableAuth = configService.get<boolean>('app.enableAuth');
   const envName = configService.get<string>('app.env');
   const dbHost = configService.get<string>('database.host');
-  Logger.log(
+  winstonLogger.log(
     `Application is running on: ${port} env=${envName} auth=${enableAuth ? 'ENABLED' : 'DISABLED'} dbHost=${dbHost}`,
+    'Bootstrap',
   );
-  Logger.log(`Swagger documentation available at: http://localhost:${port}/api`);
+  winstonLogger.log(`Swagger documentation available at: http://localhost:${port}/api`, 'Bootstrap');
 }
 
 bootstrap();

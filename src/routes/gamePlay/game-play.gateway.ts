@@ -476,11 +476,17 @@ export class GamePlayGateway
           const agentId: string | undefined = sock.data?.agentId;
           const gameMode: string | undefined = sock.data?.gameMode;
           if (!userId || !agentId || !gameMode) {
+            this.logger.warn(
+              `Bet action missing context: socket=${sock.id} userId=${userId} agentId=${agentId} gameMode=${gameMode}`,
+            );
             return ack({
               error: ERROR_RESPONSES.MISSING_CONTEXT,
               details: { userId, agentId, gameMode },
             });
           }
+          this.logger.debug(
+            `Bet action received: socket=${sock.id} user=${userId} agent=${agentId} payload=${JSON.stringify(data?.payload)}`,
+          );
           this.gamePlayService
             .performBetFlow(userId, agentId, gameMode, data?.payload)
             .then(async (resp) => {
@@ -493,8 +499,12 @@ export class GamePlayGateway
                   balance: walletBalance.balance.toString(),
                 };
                 sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
-                this.logger.debug(
-                  `Emitted onBalanceChange after bet: balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                this.logger.log(
+                  `Balance updated after bet: socket=${sock.id} user=${userId} balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                );
+              } else {
+                this.logger.warn(
+                  `Bet failed - no balance update: socket=${sock.id} user=${userId} error=${resp.error}`,
                 );
               }
             })
@@ -510,12 +520,22 @@ export class GamePlayGateway
           const agentId: string | undefined = sock.data?.agentId;
 
           if (!userId || !agentId) {
+            this.logger.warn(
+              `Step action missing user/agent: socket=${sock.id} userId=${userId} agentId=${agentId}`,
+            );
             return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
           }
           const lineNumber = Number(data?.payload?.lineNumber);
-          if (!isFinite(lineNumber))
+          if (!isFinite(lineNumber)) {
+            this.logger.warn(
+              `Invalid line number: socket=${sock.id} user=${userId} lineNumber=${data?.payload?.lineNumber}`,
+            );
             return ack({ error: ERROR_RESPONSES.INVALID_LINE_NUMBER });
+          }
 
+          this.logger.debug(
+            `Step action received: socket=${sock.id} user=${userId} agent=${agentId} lineNumber=${lineNumber}`,
+          );
           this.gamePlayService
             .performStepFlow(userId, agentId, lineNumber)
             .then(async (r) => {
@@ -527,8 +547,8 @@ export class GamePlayGateway
                 };
                 sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
                 ack(r);
-                this.logger.debug(
-                  `Emitted onBalanceChange and duplicate acknowledgement after step (finished): balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                this.logger.log(
+                  `Balance updated after step (finished): socket=${sock.id} user=${userId} balance=${walletBalance.balance} currency=${r.currency} endReason=${r.endReason || 'N/A'}`,
                 );
               } else {
                 ack(r);
@@ -545,8 +565,14 @@ export class GamePlayGateway
           const userId: string | undefined = sock.data?.userId;
           const agentId: string | undefined = sock.data?.agentId;
           if (!userId || !agentId) {
+            this.logger.warn(
+              `Cashout action missing user/agent: socket=${sock.id} userId=${userId} agentId=${agentId}`,
+            );
             return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
           }
+          this.logger.debug(
+            `Cashout action received: socket=${sock.id} user=${userId} agent=${agentId}`,
+          );
           this.gamePlayService
             .performCashOutFlow(userId, agentId)
             .then(async (r) => {
@@ -559,8 +585,12 @@ export class GamePlayGateway
                   balance: walletBalance.balance.toString(),
                 };
                 sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
-                this.logger.debug(
-                  `Emitted onBalanceChange after cashout: balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                this.logger.log(
+                  `Balance updated after cashout: socket=${sock.id} user=${userId} balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                );
+              } else {
+                this.logger.warn(
+                  `Cashout failed - no balance update: socket=${sock.id} user=${userId} error=${r.error}`,
                 );
               }
             })
