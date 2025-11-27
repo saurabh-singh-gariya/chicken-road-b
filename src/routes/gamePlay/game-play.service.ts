@@ -919,6 +919,72 @@ export class GamePlayService {
   }
 
   /**
+   * Generate mock fairness data for bet history
+   * TODO: Replace with actual fairness data from bet records
+   */
+  private generateMockFairnessData(): {
+    decimal: string;
+    clientSeed: string;
+    serverSeed: string;
+    combinedHash: string;
+    hashedServerSeed: string;
+  } {
+    // Hardcoded mock values - same for all bets for now
+    return {
+      decimal: '5.017991759915008e+153',
+      clientSeed: 'e0b4c48b46701588',
+      serverSeed: '4aa52523046b8c93730232b489f4c230b5ade0db',
+      combinedHash: '5fcf6ecbe3145f44715b92a5653d5698618433873f1c801f9e891b9e015966ddd1584ebfec43386b771ef1d2f561fb3c55b8fb2e961f8603fdb55821e3e230fb',
+      hashedServerSeed: 'e11ebe244706f2f1c3bb8c4d405abc662da3d152f8dee681db480e0cdb1a0a69c5b547450cb029aeb542b3cff53567d7a157b043a17e4553e9710189c7a0ba7c',
+    };
+  }
+
+  /**
+   * Get bet history for a user
+   * Returns first 30 bets ordered by creation date (newest first)
+   */
+  async getMyBetsHistory(
+    userId: string,
+    agentId: string,
+  ): Promise<any[]> {
+    this.logger.debug(
+      `Fetching bet history: user=${userId} agent=${agentId}`,
+    );
+
+    const bets = await this.betService.listUserBets(userId, 30);
+    const mockFairness = this.generateMockFairnessData();
+
+    return bets.map((bet) => {
+      const betAmount = parseFloat(bet.betAmount || '0');
+      const winAmount = parseFloat(bet.winAmount || '0');
+      
+      // TODO: Calculate withdrawCoeff from actual bet data or store in database
+      const withdrawCoeff = betAmount > 0 && winAmount > 0 ? winAmount / betAmount : 0;
+      
+      // TODO: Get actual coeff from game session or store in database
+      const gameMetaCoeff = betAmount > 0 && winAmount > 0 ? (winAmount / betAmount).toFixed(2) : '0';
+
+      return {
+        id: bet.id,
+        createdAt: bet.createdAt.toISOString(),
+        gameId: 0,
+        finishCoeff: 0,
+        fairness: mockFairness,
+        betAmount: betAmount,
+        win: winAmount,
+        withdrawCoeff: withdrawCoeff,
+        operatorId: agentId,
+        userId: bet.userId,
+        currency: bet.currency,
+        gameMeta: {
+          coeff: gameMetaCoeff,
+          difficulty: bet.difficulty,
+        },
+      };
+    });
+  }
+
+  /**
    * TEMPORARY: Clear all Redis data and delete all PLACED bets
    * Used for cleanup on WebSocket disconnect during development
    */

@@ -617,6 +617,22 @@ export class GamePlayGateway
           return;
         }
 
+        if (rawAction === GameAction.GET_MY_BETS_HISTORY) {
+          const userId: string | undefined = sock.data?.userId;
+          const agentId: string | undefined = sock.data?.agentId;
+          if (!userId || !agentId) {
+            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+          }
+          this.gamePlayService
+            .getMyBetsHistory(userId, agentId)
+            .then((bets) => ack(bets))
+            .catch((e) => {
+              this.logger.error(`Get bet history failed: ${e}`);
+              ack({ error: 'get_bet_history_failed' });
+            });
+          return;
+        }
+
         if (knownPlaceholders.includes(rawAction as GameAction)) {
           return ack(null);
         }
