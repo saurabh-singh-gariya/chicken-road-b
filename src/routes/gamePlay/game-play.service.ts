@@ -1089,7 +1089,9 @@ export class GamePlayService {
       `Fetching bet history: user=${userId} agent=${agentId}`,
     );
 
-    const bets = await this.betService.listUserBets(userId, 30);
+    const lastWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const bets = await this.betService.listUserBetsByTimeRange(userId, lastWeek, new Date(), 30);
 
     return bets.map((bet) => {
       const betAmount = parseFloat(bet.betAmount || '0');

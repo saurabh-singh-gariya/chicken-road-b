@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, Repository } from 'typeorm';
+import { Between, FindOptionsWhere, Repository } from 'typeorm';
 import { Bet, BetStatus, Difficulty } from '../../entities/bet.entity';
 
 export interface CreateBetParams {
@@ -63,7 +63,7 @@ const ERROR_MESSAGES = {
 export class BetService {
   private readonly logger = new Logger(BetService.name);
 
-  constructor(@InjectRepository(Bet) private readonly repo: Repository<Bet>) {}
+  constructor(@InjectRepository(Bet) private readonly repo: Repository<Bet>) { }
 
   private whereByExternalTx(
     externalPlatformTxId: string,
@@ -188,6 +188,14 @@ export class BetService {
   async listUserBets(userId: string, limit = 50): Promise<Bet[]> {
     return this.repo.find({
       where: { userId },
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
+  }
+
+  async listUserBetsByTimeRange(userId: string, startTime: Date, endTime: Date, limit = 50): Promise<Bet[]> {
+    return this.repo.find({
+      where: { userId, createdAt: Between(startTime, endTime) },
       order: { createdAt: 'DESC' },
       take: limit,
     });
