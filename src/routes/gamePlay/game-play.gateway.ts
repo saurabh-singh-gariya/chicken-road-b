@@ -604,6 +604,7 @@ export class GamePlayGateway
         if (rawAction === GameAction.GET_GAME_SESSION) {
           const userId: string | undefined = sock.data?.userId;
           const agentId: string | undefined = sock.data?.agentId;
+          this.logger.log(`Get game session action received: socket=${sock.id} user=${userId} agent=${agentId}`);
           if (!userId || !agentId) {
             return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
           }
@@ -644,6 +645,30 @@ export class GamePlayGateway
         );
       };
       sock.prependListener(WS_EVENTS.GAME_SERVICE, ackHandler);
+
+      // Handle direct event for bet history
+      const betHistoryHandler = (data: any, ack?: Function) => {
+        if (typeof ack !== 'function') return;
+        
+        const userId: string | undefined = sock.data?.userId;
+        const agentId: string | undefined = sock.data?.agentId;
+        
+        this.logger.log(`Bet history request received: socket=${sock.id} user=${userId} agent=${agentId}`);
+        
+        if (!userId || !agentId) {
+          return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+        }
+        
+        this.gamePlayService
+          .getMyBetsHistory(userId, agentId)
+          .then((bets) => ack(bets))
+          .catch((e) => {
+            this.logger.error(`Get bet history failed: ${e}`);
+            ack({ error: 'get_bet_history_failed' });
+          });
+      };
+      
+      sock.prependListener('gameService-get-my-bets-history', betHistoryHandler);
     });
   }
 }
