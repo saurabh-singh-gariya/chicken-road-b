@@ -24,6 +24,7 @@ export interface CreateBetParams {
   betPlacedAt?: Date;
   balanceAfterBet?: string;
   createdBy: string;
+  operatorId: string;
 }
 
 export interface SettlementParams {
@@ -35,6 +36,15 @@ export interface SettlementParams {
   balanceAfterSettlement?: string;
   gameInfo?: string;
   updatedBy: string;
+  finalCoeff?: string;
+  withdrawCoeff?: string;
+  fairnessData?: {
+    decimal: string;
+    clientSeed: string;
+    serverSeed: string;
+    combinedHash: string;
+    hashedServerSeed: string;
+  };
 }
 
 export interface UpdateBetStatusParams {
@@ -89,6 +99,7 @@ export class BetService {
       status: BetStatus.PLACED,
       createdBy: params.createdBy,
       updatedBy: params.createdBy,
+      operatorId: params.operatorId,
     });
     const saved = await this.repo.save(entity);
     this.logger.log(
@@ -113,6 +124,9 @@ export class BetService {
     bet.settledAt = params.settledAt || new Date();
     bet.balanceAfterSettlement = params.balanceAfterSettlement;
     bet.gameInfo = params.gameInfo;
+    bet.finalCoeff = params.finalCoeff;
+    bet.withdrawCoeff = params.withdrawCoeff;
+    bet.fairnessData = params.fairnessData;
 
     if (bet.winAmount && Number(bet.winAmount) > 0) {
       bet.status = BetStatus.WON;

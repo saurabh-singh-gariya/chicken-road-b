@@ -10,6 +10,7 @@ import jwtConfig from './config/jwt.config';
 import { User } from './entities/User.entity';
 import { Agents } from './entities/agents.entity';
 import { GameConfig } from './entities/game-config.entity';
+import { Bet } from './entities/bet.entity';
 
 import { AgentsModule } from './modules/agents/agents.module';
 import { BetModule } from './modules/bet/bet.module';
@@ -50,6 +51,7 @@ import {HealthController} from './routes/extra/health.controller';
           database: dbConfig?.database,
           synchronize: dbConfig?.synchronize,
           autoLoadEntities: true,
+          entities: [User, Agents, GameConfig, Bet],
           // logging: ['error'] // optional, omit for compatibility
         };
         Logger.log(

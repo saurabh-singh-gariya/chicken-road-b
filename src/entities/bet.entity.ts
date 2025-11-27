@@ -112,4 +112,22 @@ export class Bet {
 
   @Column({ nullable: true })
   updatedBy?: string;
+
+  @Column({ nullable: false, length: 64 })
+  operatorId: string;
+
+  @Column('decimal', { precision: 18, scale: 3, nullable: true })
+  finalCoeff?: string;
+
+  @Column('decimal', { precision: 18, scale: 3, nullable: true })
+  withdrawCoeff?: string;
+
+  @Column({ type: 'json', nullable: true })
+  fairnessData?: {
+    decimal?: string;
+    clientSeed?: string;
+    serverSeed?: string;
+    combinedHash?: string;
+    hashedServerSeed?: string;
+  };
 }
