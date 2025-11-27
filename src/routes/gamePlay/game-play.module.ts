@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AgentsModule } from '../../modules/agents/agents.module';
 import { BetModule } from '../../modules/bet/bet.module';
+import { FairnessModule } from '../../modules/fairness/fairness.module';
 import { GameConfigModule } from '../../modules/gameConfig/game-config.module';
 import { HazardModule } from '../../modules/hazard/hazard.module';
 import { JwtTokenModule } from '../../modules/jwt/jwt-token.module';
@@ -19,6 +20,7 @@ import { UserModule } from '../../modules/user/user.module';
     RedisModule,
     AgentsModule,
     BetModule,
+    FairnessModule,
     HazardModule,
     SingleWalletFunctionsModule,
     UserModule,

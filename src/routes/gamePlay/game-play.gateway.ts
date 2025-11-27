@@ -19,6 +19,7 @@ import { GamePlayService } from './game-play.service';
 import { SingleWalletFunctionsService } from '../single-wallet-functions/single-wallet-functions.service';
 import { UserService } from '../../modules/user/user.service';
 import { LastWinBroadcasterService } from '../../modules/last-win/last-win-broadcaster.service';
+import { FairnessService } from '../../modules/fairness/fairness.service';
 
 const WS_EVENTS = {
   CONNECTION_ERROR: 'connection-error',
@@ -90,6 +91,7 @@ export class GamePlayGateway
     private readonly singleWalletFunctionsService: SingleWalletFunctionsService,
     private readonly userService: UserService,
     private readonly lastWinBroadcasterService: LastWinBroadcasterService,
+    private readonly fairnessService: FairnessService,
   ) { }
 
   async handleConnection(client: Socket) {
@@ -183,6 +185,16 @@ export class GamePlayGateway
     };
 
     const currencies = await this.gamePlayService.getCurrencies();
+
+    // Generate or retrieve fairness seeds for user
+    try {
+      await this.fairnessService.getOrCreateFairness(userId, agentId);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to initialize fairness seeds for user=${userId} agent=${agentId}: ${error.message}`,
+      );
+      // Continue without failing connection
+    }
 
     client.emit(WS_EVENTS.BALANCE_CHANGE, balance);
     client.emit(WS_EVENTS.BETS_RANGES, betsRanges);
@@ -466,10 +478,44 @@ export class GamePlayGateway
         }
         const knownPlaceholders: GameAction[] = [
           GameAction.GET_GAME_SESSION,
-          GameAction.GET_GAME_SEEDS,
-          GameAction.SET_USER_SEED,
           GameAction.GET_GAME_STATE
         ];
+
+        if (rawAction === GameAction.GET_GAME_SEEDS) {
+          const userId: string | undefined = sock.data?.userId;
+          const agentId: string | undefined = sock.data?.agentId;
+          if (!userId || !agentId) {
+            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+          }
+          this.gamePlayService
+            .getGameSeeds(userId, agentId)
+            .then((r) => ack(r))
+            .catch((e) => {
+              this.logger.error(`Get game seeds failed: ${e}`);
+              ack({ error: 'get_game_seeds_failed' });
+            });
+          return;
+        }
+
+        if (rawAction === GameAction.SET_USER_SEED) {
+          const userId: string | undefined = sock.data?.userId;
+          const agentId: string | undefined = sock.data?.agentId;
+          const userSeed: string | undefined = data?.payload?.userSeed;
+          if (!userId || !agentId) {
+            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+          }
+          if (!userSeed || typeof userSeed !== 'string') {
+            return ack({ error: 'missing_user_seed' });
+          }
+          this.gamePlayService
+            .setUserSeed(userId, agentId, userSeed)
+            .then((r) => ack(r))
+            .catch((e) => {
+              this.logger.error(`Set user seed failed: ${e}`);
+              ack({ error: e.message || 'set_user_seed_failed' });
+            });
+          return;
+        }
 
         if (rawAction === GameAction.BET) {
           const userId: string | undefined = sock.data?.userId;

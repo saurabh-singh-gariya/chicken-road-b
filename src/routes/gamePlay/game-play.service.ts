@@ -4,6 +4,7 @@ import { validate } from 'class-validator';
 import { v4 as uuidv4 } from 'uuid';
 import { Difficulty as BetDifficulty } from '../../entities/bet.entity';
 import { BetService } from '../../modules/bet/bet.service';
+import { FairnessService } from '../../modules/fairness/fairness.service';
 import { GameConfigService } from '../../modules/gameConfig/game-config.service';
 import { HazardSchedulerService } from '../../modules/hazard/hazard-scheduler.service';
 import { RedisService } from '../../modules/redis/redis.service';
@@ -23,6 +24,9 @@ interface GameSession {
   currency: string;
   difficulty: Difficulty;
   serverSeed?: string;
+  userSeed?: string;
+  hashedServerSeed?: string;
+  nonce?: number;
   coefficients: string[];
   currentStep: number;
   winAmount: number;
@@ -101,6 +105,7 @@ export class GamePlayService {
     private readonly betService: BetService,
     private readonly hazardSchedulerService: HazardSchedulerService,
     private readonly walletErrorService: WalletErrorService,
+    private readonly fairnessService: FairnessService,
   ) { }
 
   async performBetFlow(
@@ -221,6 +226,12 @@ export class GamePlayService {
       `Loaded coefficients for difficulty ${difficultyUC}: ${coeffArray.length} steps`,
     );
 
+    // Retrieve fairness seeds for this bet
+    const fairnessData = await this.fairnessService.getOrCreateFairness(
+      userId,
+      agentId,
+    );
+
     const session: GameSession = {
       userId,
       agentId,
@@ -235,6 +246,10 @@ export class GamePlayService {
       createdAt: new Date(),
       platformBetTxId: externalPlatformTxId,
       roundId,
+      userSeed: fairnessData.userSeed,
+      serverSeed: fairnessData.serverSeed,
+      hashedServerSeed: fairnessData.hashedServerSeed,
+      nonce: fairnessData.nonce,
     };
     this.logger.debug(
       `Creating game session in Redis: user=${userId} agent=${agentId} key=${redisKey} step=${session.currentStep}`,
@@ -385,9 +400,12 @@ export class GamePlayService {
         const finalCoeff = gameSession.currentStep >= 0
           ? gameSession.coefficients[gameSession.currentStep]
           : '0';
+        
+        // Generate fairness data using seeds from game session
         const fairnessData = this.generateFairnessData(
-          gameSession.roundId,
+          gameSession.userSeed,
           gameSession.serverSeed,
+          gameSession.roundId,
         );
 
         this.logger.debug(
@@ -405,6 +423,16 @@ export class GamePlayService {
           withdrawCoeff,
           fairnessData,
         });
+
+        // Rotate seeds after successful settlement
+        try {
+          await this.fairnessService.rotateSeeds(userId, agentId);
+        } catch (rotateError) {
+          this.logger.warn(
+            `Failed to rotate seeds after settlement: user=${userId} agent=${agentId} error=${rotateError.message}`,
+          );
+          // Don't fail settlement if seed rotation fails
+        }
       } catch (error: any) {
         this.logger.error(
           `Settlement failed: user=${userId} txId=${gameSession.platformBetTxId}`,
@@ -516,9 +544,12 @@ export class GamePlayService {
       const finalCoeff = gameSession.currentStep >= 0
         ? gameSession.coefficients[gameSession.currentStep]
         : '0';
+      
+      // Generate fairness data using seeds from game session
       const fairnessData = this.generateFairnessData(
-        gameSession.roundId,
+        gameSession.userSeed,
         gameSession.serverSeed,
+        gameSession.roundId,
       );
 
       this.logger.debug(
@@ -537,6 +568,16 @@ export class GamePlayService {
         withdrawCoeff,
         fairnessData,
       });
+
+      // Rotate seeds after successful cashout settlement
+      try {
+        await this.fairnessService.rotateSeeds(userId, agentId);
+      } catch (rotateError) {
+        this.logger.warn(
+          `Failed to rotate seeds after cashout: user=${userId} agent=${agentId} error=${rotateError.message}`,
+        );
+        // Don't fail cashout if seed rotation fails
+      }
     } catch (error: any) {
       this.logger.error(
         `Cashout settlement failed: user=${userId} txId=${gameSession.platformBetTxId}`,
@@ -694,18 +735,12 @@ export class GamePlayService {
           hint: 'Will return current active session details when implemented',
         };
       case 'get-game-seeds':
-        return {
-          action,
-          status: 'not_implemented',
-          message: 'Seed list retrieval not implemented',
-          seeds: [],
-        };
       case 'set-user-seed':
+        // These are now implemented, but handled separately
         return {
           action,
           status: 'not_implemented',
-          message: 'Setting user seed not implemented',
-          received: payload ?? null,
+          message: 'This action should be handled by dedicated handler',
         };
       default:
         return {
@@ -952,11 +987,57 @@ export class GamePlayService {
   }
 
   /**
+   * Get game seeds for a user
+   * Returns userSeed, hashedServerSeed, and nonce
+   */
+  async getGameSeeds(
+    userId: string,
+    agentId: string,
+  ): Promise<{
+    userSeed: string;
+    hashedServerSeed: string;
+    nonce: string;
+  }> {
+    const fairnessData = await this.fairnessService.getOrCreateFairness(
+      userId,
+      agentId,
+    );
+
+    return {
+      userSeed: fairnessData.userSeed,
+      hashedServerSeed: fairnessData.hashedServerSeed,
+      nonce: fairnessData.nonce.toString(),
+    };
+  }
+
+  /**
+   * Set user seed
+   */
+  async setUserSeed(
+    userId: string,
+    agentId: string,
+    userSeed: string,
+  ): Promise<{ success: boolean; userSeed: string }> {
+    const fairnessData = await this.fairnessService.setUserSeed(
+      userId,
+      agentId,
+      userSeed,
+    );
+
+    return {
+      success: true,
+      userSeed: fairnessData.userSeed,
+    };
+  }
+
+  /**
    * Generate fairness data for bet history
+   * Uses seeds from game session if available, otherwise falls back to legacy method
    */
   private generateFairnessData(
-    roundId: string,
+    userSeed?: string,
     serverSeed?: string,
+    roundId?: string,
   ): {
     decimal: string;
     clientSeed: string;
@@ -964,12 +1045,21 @@ export class GamePlayService {
     combinedHash: string;
     hashedServerSeed: string;
   } {
+    // If seeds are provided, use fairness service
+    if (userSeed && serverSeed) {
+      return this.fairnessService.generateFairnessDataForBet(
+        userSeed,
+        serverSeed,
+      );
+    }
+
+    // Legacy fallback (for backward compatibility)
     const crypto = require('crypto');
-    const clientSeed = roundId.substring(0, 16) || 'e0b4c48b46701588';
+    const clientSeed = roundId?.substring(0, 16) || 'e0b4c48b46701588';
     const finalServerSeed = serverSeed || crypto.randomBytes(32).toString('hex');
-    const combined = `${clientSeed}-${finalServerSeed}`;
-    const combinedHash = crypto.createHash('sha512').update(combined).digest('hex');
-    const hashedServerSeed = crypto.createHash('sha512').update(finalServerSeed).digest('hex');
+    const combined = `${clientSeed}${finalServerSeed}`;
+    const combinedHash = crypto.createHash('sha256').update(combined).digest('hex');
+    const hashedServerSeed = crypto.createHash('sha256').update(finalServerSeed).digest('hex');
     
     // Generate decimal from hash (first 20 chars as hex, convert to decimal)
     const hashPrefix = combinedHash.substring(0, 20);
@@ -1013,7 +1103,12 @@ export class GamePlayService {
         ? bet.finalCoeff 
         : (betAmount > 0 && winAmount > 0 ? (winAmount / betAmount).toFixed(2) : '0');
 
-      const fairness = bet.fairnessData || this.generateFairnessData(bet.roundId);
+      // Use stored fairness data if available, otherwise generate fallback
+      const fairness = bet.fairnessData || this.generateFairnessData(
+        undefined,
+        undefined,
+        bet.roundId,
+      );
 
       return {
         id: bet.id,
