@@ -1,18 +1,5 @@
 import { registerAs } from '@nestjs/config';
-
-/**
- * Default fallback values for JWT configuration.
- *
- * @remarks
- * WARNING: The default secret is for development only.
- * MUST set JWT_SECRET environment variable in production with a strong, random value.
- */
-const DEFAULTS = {
-  /** JWT signing secret (MUST be changed for production) */
-  SECRET: 'CHANGE_ME_DEV_SECRET',
-  /** Token expiration time */
-  EXPIRES_IN: '1h',
-} as const;
+import { DEFAULTS } from './defaults.config';
 
 /**
  * JWT configuration interface
@@ -40,7 +27,7 @@ export interface JwtConfig {
 export default registerAs(
   'jwt',
   (): JwtConfig => ({
-    secret: process.env.JWT_SECRET || DEFAULTS.SECRET,
-    expiresIn: process.env.JWT_EXPIRES || process.env.JWT_EXPIRES_IN || DEFAULTS.EXPIRES_IN,
+    secret: process.env.JWT_SECRET || DEFAULTS.JWT.DEFAULT_SECRET,
+    expiresIn: process.env.JWT_EXPIRES || process.env.JWT_EXPIRES_IN || DEFAULTS.JWT.DEFAULT_EXPIRES_IN,
   }),
 );

@@ -6,13 +6,12 @@ import {
 } from '@nestjs/common';
 import { Observable, map } from 'rxjs';
 import { ERROR_CODES } from '../constants';
+import { DEFAULTS } from '../../config/defaults.config';
 
 interface ResponseWithStatus {
   status: string;
   [key: string]: any;
 }
-
-const DEFAULT_SUCCESS_DESC = 'OK';
 
 @Injectable()
 export class ResponseTransformInterceptor implements NestInterceptor {
@@ -44,7 +43,7 @@ export class ResponseTransformInterceptor implements NestInterceptor {
   private wrapPrimitiveResponse(data: unknown): ResponseWithStatus {
     return {
       status: ERROR_CODES.SUCCESS,
-      desc: DEFAULT_SUCCESS_DESC,
+      desc: DEFAULTS.RESPONSE.DEFAULT_SUCCESS_DESC,
       value: data,
     };
   }

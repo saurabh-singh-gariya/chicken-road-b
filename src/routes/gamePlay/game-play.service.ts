@@ -17,6 +17,7 @@ import {
 } from '../../entities/wallet-error.entity';
 import { SingleWalletFunctionsService } from '../single-wallet-functions/single-wallet-functions.service';
 import { BetPayloadDto, Difficulty } from './DTO/bet-payload.dto';
+import { DEFAULTS } from '../../config/defaults.config';
 
 interface GameSession {
   userId: string;
@@ -60,41 +61,32 @@ type GameConfigPayload =
   }
 
 const GAME_CONSTANTS = {
-  TOTAL_COLUMNS: 15,
-  HAZARD_REFRESH_MS: 5000,
-  DECIMAL_PLACES: 3,
-  INITIAL_STEP: -1,
-  PLATFORM_NAME: 'In-out',
-  GAME_TYPE: 'CRASH',
-  GAME_CODE: 'chicken-road-2',
-  GAME_NAME: 'chicken-road-2',
+  TOTAL_COLUMNS: DEFAULTS.hazardConfig.totalColumns,
+  HAZARD_REFRESH_MS: DEFAULTS.hazardConfig.hazardRefreshMs,
+  DECIMAL_PLACES: DEFAULTS.GAME.DECIMAL_PLACES,
+  INITIAL_STEP: DEFAULTS.GAME.INITIAL_STEP,
+  PLATFORM_NAME: DEFAULTS.GAME.PLATFORM_NAME,
+  GAME_TYPE: DEFAULTS.GAME.GAME_TYPE,
+  GAME_CODE: DEFAULTS.GAME.GAME_CODE,
+  GAME_NAME: DEFAULTS.GAME.GAME_NAME,
 } as const;
 
 const HAZARD_CONFIG = {
-  [Difficulty.EASY]: 3,
-  [Difficulty.MEDIUM]: 4,
-  [Difficulty.HARD]: 5,
-  [Difficulty.DAREDEVIL]: 7,
+  [Difficulty.EASY]: DEFAULTS.hazardConfig.hazards.EASY,
+  [Difficulty.MEDIUM]: DEFAULTS.hazardConfig.hazards.MEDIUM,
+  [Difficulty.HARD]: DEFAULTS.hazardConfig.hazards.HARD,
+  [Difficulty.DAREDEVIL]: DEFAULTS.hazardConfig.hazards.DAREDEVIL,
 } as const;
 
-const ERROR_MESSAGES = {
-  ACTIVE_SESSION_EXISTS: 'active_session_exists',
-  VALIDATION_FAILED: 'validation_failed',
-  INVALID_BET_AMOUNT: 'invalid_bet_amount',
-  AGENT_REJECTED: 'agent_rejected',
-  INVALID_DIFFICULTY_CONFIG: 'invalid_difficulty_config',
-  NO_ACTIVE_SESSION: 'no_active_session',
-  INVALID_STEP_SEQUENCE: 'invalid_step_sequence',
-  SETTLEMENT_FAILED: 'settlement_failed Please contact support',
-} as const;
+const ERROR_MESSAGES = DEFAULTS.ERROR_MESSAGES;
 
 @Injectable()
 export class GamePlayService {
   private logger = new Logger(GamePlayService.name);
 
   private readonly DEFAULT_CONFIG = {
-    totalColumns: GAME_CONSTANTS.TOTAL_COLUMNS,
-    hazardRefreshMs: GAME_CONSTANTS.HAZARD_REFRESH_MS,
+    totalColumns: DEFAULTS.hazardConfig.totalColumns,
+    hazardRefreshMs: DEFAULTS.hazardConfig.hazardRefreshMs,
     hazards: HAZARD_CONFIG,
   };
 
@@ -258,7 +250,7 @@ export class GamePlayService {
 
     const resp: BetStepResponse = {
       isFinished: false,
-      coeff: '1',
+      coeff: DEFAULTS.GAME.DEFAULT_COEFF,
       winAmount: betAmountStr,
       difficulty: difficultyUC,
       betAmount: betAmountStr,
@@ -365,7 +357,7 @@ export class GamePlayService {
 
     let settlementAmount = 0;
     if (endReason === 'hazard') {
-      settlementAmount = 0.00;
+      settlementAmount = DEFAULTS.GAME.SETTLEMENT_AMOUNT_ZERO;
     } else if (endReason === 'win') {
       settlementAmount = gameSession.winAmount;
     }
@@ -669,11 +661,11 @@ export class GamePlayService {
   }
 
   private getStepCoeff(session: GameSession, stepIndex: number): number {
-    if (stepIndex < 0) return 1;
+    if (stepIndex < 0) return DEFAULTS.GAME.DEFAULT_MULTIPLIER;
     const arr: string[] = session.coefficients || [];
     const raw = arr[stepIndex];
     const val = parseFloat(raw);
-    return isFinite(val) ? val : 1;
+    return isFinite(val) ? val : DEFAULTS.GAME.DEFAULT_MULTIPLIER;
   }
 
   private sendStepResponse(
@@ -967,9 +959,9 @@ export class GamePlayService {
         betConfig: newBetConfig,
         coefficients,
         lastWin: {
-          username: 'Salmon Delighted Loon',
-          winAmount: '306.00',
-          currency: 'USD',
+          username: DEFAULTS.LAST_WIN.DEFAULT_USERNAME,
+          winAmount: DEFAULTS.LAST_WIN.DEFAULT_WIN_AMOUNT,
+          currency: DEFAULTS.LAST_WIN.DEFAULT_CURRENCY,
         }
       }
     } catch (e) {
@@ -978,9 +970,9 @@ export class GamePlayService {
         betConfig: {},
         coefficients: {},
         lastWin: {
-          username: 'UNKNOWN',
-          winAmount: '0',
-          currency: 'INR',
+          username: DEFAULTS.LAST_WIN.FALLBACK_USERNAME,
+          winAmount: DEFAULTS.LAST_WIN.FALLBACK_WIN_AMOUNT,
+          currency: DEFAULTS.LAST_WIN.FALLBACK_CURRENCY,
         },
       }
     }
@@ -1055,7 +1047,7 @@ export class GamePlayService {
 
     // Legacy fallback (for backward compatibility)
     const crypto = require('crypto');
-    const clientSeed = roundId?.substring(0, 16) || 'e0b4c48b46701588';
+    const clientSeed = roundId?.substring(0, DEFAULTS.FAIRNESS.CLIENT_SEED_LENGTH) || DEFAULTS.FAIRNESS.LEGACY_CLIENT_SEED;
     const finalServerSeed = serverSeed || crypto.randomBytes(32).toString('hex');
     const combined = `${clientSeed}${finalServerSeed}`;
     const combinedHash = crypto.createHash('sha256').update(combined).digest('hex');
@@ -1089,9 +1081,9 @@ export class GamePlayService {
       `Fetching bet history: user=${userId} agent=${agentId}`,
     );
 
-    const lastWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const lastWeek = new Date(Date.now() - DEFAULTS.GAME.BET_HISTORY_DAYS * 24 * 60 * 60 * 1000);  
 
-    const bets = await this.betService.listUserBetsByTimeRange(userId, lastWeek, new Date(), 30);
+    const bets = await this.betService.listUserBetsByTimeRange(userId, lastWeek, new Date(), DEFAULTS.GAME.BET_HISTORY_LIMIT);
 
     return bets.map((bet) => {
       const betAmount = parseFloat(bet.betAmount || '0');

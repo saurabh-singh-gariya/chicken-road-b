@@ -20,6 +20,7 @@ import { SingleWalletFunctionsService } from '../single-wallet-functions/single-
 import { UserService } from '../../modules/user/user.service';
 import { LastWinBroadcasterService } from '../../modules/last-win/last-win-broadcaster.service';
 import { FairnessService } from '../../modules/fairness/fairness.service';
+import { DEFAULTS } from '../../config/defaults.config';
 
 const WS_EVENTS = {
   CONNECTION_ERROR: 'connection-error',
@@ -55,8 +56,6 @@ const ERROR_RESPONSES = {
 } as const;
 
 const TOKEN_SUFFIX_PATTERN = /=4$/;
-const DEFAULT_CURRENCY = 'INR';
-const DEFAULT_BALANCE = '1000000';
 
 interface BalanceEventPayload {
   currency: string;
@@ -158,15 +157,17 @@ export class GamePlayGateway
     (client.data ||= {}).agentId = agentId;
 
     const balance: BalanceEventPayload = {
-      currency: DEFAULT_CURRENCY,
-      balance: DEFAULT_BALANCE,
+      currency: DEFAULTS.CURRENCY.DEFAULT,
+      balance: DEFAULTS.CURRENCY.DEFAULT_BALANCE,
     };
 
     const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
     balance.balance = walletBalance.balance.toString();
-    balance.currency = DEFAULT_CURRENCY;
+    balance.currency = DEFAULTS.CURRENCY.DEFAULT;
 
-    const betsRanges = { INR: ['0.01', '150.00'] };
+    const betsRanges = {
+      [DEFAULTS.betConfig.currency]: [DEFAULTS.betConfig.minBetAmount, DEFAULTS.betConfig.maxBetAmount],
+    };
 
     let { betConfig } = await this.gamePlayService.getGameConfigPayload();
 
@@ -181,7 +182,7 @@ export class GamePlayGateway
     const myData: MyDataEvent = {
       userId: userId,
       nickname: userData.username || userId,
-      gameAvatar: userData?.avatar || null,
+      gameAvatar: userData?.avatar || DEFAULTS.USER.DEFAULT_AVATAR,
     };
 
     const currencies = await this.gamePlayService.getCurrencies();
@@ -541,12 +542,12 @@ export class GamePlayGateway
               if (!('error' in resp)) {
                 const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
                 const balanceEvent: BalanceEventPayload = {
-                  currency: DEFAULT_CURRENCY,
+                  currency: DEFAULTS.CURRENCY.DEFAULT,
                   balance: walletBalance.balance.toString(),
                 };
                 sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
                 this.logger.log(
-                  `Balance updated after bet: socket=${sock.id} user=${userId} balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                  `Balance updated after bet: socket=${sock.id} user=${userId} balance=${walletBalance.balance} currency=${DEFAULTS.CURRENCY.DEFAULT}`,
                 );
               } else {
                 this.logger.warn(
@@ -627,12 +628,12 @@ export class GamePlayGateway
               if (!('error' in r)) {
                 const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
                 const balanceEvent: BalanceEventPayload = {
-                  currency: DEFAULT_CURRENCY,
+                  currency: DEFAULTS.CURRENCY.DEFAULT,
                   balance: walletBalance.balance.toString(),
                 };
                 sock.emit(WS_EVENTS.BALANCE_CHANGE, balanceEvent);
                 this.logger.log(
-                  `Balance updated after cashout: socket=${sock.id} user=${userId} balance=${walletBalance.balance} currency=${DEFAULT_CURRENCY}`,
+                  `Balance updated after cashout: socket=${sock.id} user=${userId} balance=${walletBalance.balance} currency=${DEFAULTS.CURRENCY.DEFAULT}`,
                 );
               } else {
                 this.logger.warn(

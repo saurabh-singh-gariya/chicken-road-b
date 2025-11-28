@@ -3,17 +3,18 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GameConfig } from '../../entities/game-config.entity';
 import { RedisService } from '../redis/redis.service';
+import { DEFAULTS } from '../../config/defaults.config';
 
 @Injectable()
 export class GameConfigService {
   private readonly logger = new Logger(GameConfigService.name);
 
   private readonly defaultGamePayloads = {
-    gameType: 'CRASH',
-    gameCode: 'chicken-road-two',
-    gameName: 'chicken-road-2',
-    platform: 'In-out',
-    settleType: 'platformTxId',
+    gameType: DEFAULTS.GAME_PAYLOADS.GAME_TYPE,
+    gameCode: DEFAULTS.GAME_PAYLOADS.GAME_CODE,
+    gameName: DEFAULTS.GAME_PAYLOADS.GAME_NAME,
+    platform: DEFAULTS.GAME_PAYLOADS.PLATFORM,
+    settleType: DEFAULTS.GAME_PAYLOADS.SETTLE_TYPE,
   } as const;
 
   constructor(
@@ -41,7 +42,7 @@ export class GameConfigService {
       let secretJson = await this.getConfig('jwt.secret');
       secret = secretJson.secret;
     } catch (e) {
-      secret = 'CHANGE_ME_DEV_SECRET';
+      secret = DEFAULTS.JWT.DEFAULT_SECRET;
       this.logger.warn('Using env JWT_SECRET (DB entry missing)');
     }
     return secret;
@@ -63,10 +64,10 @@ export class GameConfigService {
         return envExpires;
       }
       this.logger.debug('Using default JWT_EXPIRES (DB and env missing)');
-      return '1h';
+      return DEFAULTS.JWT.DEFAULT_EXPIRES_IN;
     }
     const envExpires = process.env.JWT_EXPIRES || process.env.JWT_EXPIRES_IN;
-    return envExpires || '1h';
+    return envExpires || DEFAULTS.JWT.DEFAULT_EXPIRES_IN;
   }
 
   async getJwtExpiresGeneric(): Promise<string> {

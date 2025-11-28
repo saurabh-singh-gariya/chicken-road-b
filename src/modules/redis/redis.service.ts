@@ -1,10 +1,11 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import Redis from 'ioredis';
 import { GameConfigService } from '../gameConfig/game-config.service';
+import { DEFAULTS } from '../../config/defaults.config';
 
 const REDIS_CONSTANTS = {
-  DEFAULT_TTL: 3600,
-  CONFIG_KEY: 'redis.TTL',
+  DEFAULT_TTL: DEFAULTS.REDIS.DEFAULT_TTL,
+  CONFIG_KEY: DEFAULTS.REDIS.CONFIG_KEY,
 } as const;
 
 @Injectable()

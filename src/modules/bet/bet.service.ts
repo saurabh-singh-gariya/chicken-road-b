@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, FindOptionsWhere, Repository } from 'typeorm';
 import { Bet, BetStatus, Difficulty } from '../../entities/bet.entity';
+import { DEFAULTS } from '../../config/defaults.config';
 
 export interface CreateBetParams {
   externalPlatformTxId: string;
@@ -121,7 +122,7 @@ export class BetService {
     bet.winAmount = params.winAmount;
     bet.settleType = params.settleType;
     bet.settlementRefTxId = params.settlementRefTxId;
-    bet.settledAt = params.settledAt || new Date();
+    bet.settledAt = params.settledAt ?? new Date();
     bet.balanceAfterSettlement = params.balanceAfterSettlement;
     bet.gameInfo = params.gameInfo;
     bet.finalCoeff = params.finalCoeff;
@@ -185,7 +186,7 @@ export class BetService {
     });
   }
 
-  async listUserBets(userId: string, limit = 50): Promise<Bet[]> {
+  async listUserBets(userId: string, limit: number = DEFAULTS.BET.DEFAULT_LIMIT): Promise<Bet[]> {
     return this.repo.find({
       where: { userId },
       order: { createdAt: 'DESC' },
@@ -193,7 +194,7 @@ export class BetService {
     });
   }
 
-  async listUserBetsByTimeRange(userId: string, startTime: Date, endTime: Date, limit = 50): Promise<Bet[]> {
+  async listUserBetsByTimeRange(userId: string, startTime: Date, endTime: Date, limit: number = DEFAULTS.BET.DEFAULT_LIMIT): Promise<Bet[]> {
     return this.repo.find({
       where: { userId, createdAt: Between(startTime, endTime) },
       order: { createdAt: 'DESC' },

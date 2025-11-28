@@ -15,6 +15,7 @@ import {
   WalletApiAction,
   WalletErrorType,
 } from '../../entities/wallet-error.entity';
+import { DEFAULTS } from '../../config/defaults.config';
 
 @Injectable()
 export class SingleWalletFunctionsService {
@@ -124,7 +125,7 @@ export class SingleWalletFunctionsService {
     amount: number,
     roundId: string,
     platformTxId: string,
-    currency: string = 'INR',
+    currency: string = DEFAULTS.CURRENCY.DEFAULT,
     gamePayloads: any
   ): Promise<{
     balance: number;
@@ -289,7 +290,7 @@ export class SingleWalletFunctionsService {
           roundId,
           betAmount,
           winAmount,
-          currency: gamePayloads.currency || 'INR',
+          currency: gamePayloads.currency || DEFAULTS.CURRENCY.DEFAULT,
           callbackUrl: url,
         });
       }
@@ -332,7 +333,7 @@ export class SingleWalletFunctionsService {
           roundId,
           betAmount,
           winAmount,
-          currency: gamePayloads.currency || 'INR',
+          currency: gamePayloads.currency || DEFAULTS.CURRENCY.DEFAULT,
           callbackUrl: url,
           rawError: JSON.stringify(err),
         });

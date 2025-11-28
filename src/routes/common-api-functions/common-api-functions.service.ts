@@ -5,6 +5,7 @@ import { GameConfigService } from '../../modules/gameConfig/game-config.service'
 import { JwtTokenService } from '../../modules/jwt/jwt-token.service';
 import { CreateUserParams, UserService } from '../../modules/user/user.service';
 import { CreateMemberBodyDto } from './DTO/create-member.dto';
+import { DEFAULTS } from '../../config/defaults.config';
 
 @Injectable()
 export class CommonApiFunctionsService {
@@ -169,10 +170,10 @@ export class CommonApiFunctionsService {
     const token = await this.jwtTokenService.signUserToken(userId, agentId);
     
     // Build URL with new format
-    const gameMode = 'chicken-road-two';
-    const lang = existing.language || 'en';
-    const currency = existing.currency || 'INR';
-    const adaptive = 'true';
+    const gameMode = DEFAULTS.GAME.GAME_MODE;
+    const lang = existing.language || DEFAULTS.USER.DEFAULT_LANGUAGE;
+    const currency = existing.currency || DEFAULTS.CURRENCY.DEFAULT;
+    const adaptive = DEFAULTS.USER.DEFAULT_ADAPTIVE;
     
     const url = `https://${host}/index.html?gameMode=${encodeURIComponent(gameMode)}&operatorId=${encodeURIComponent(agentId)}&lang=${encodeURIComponent(lang)}&currency=${encodeURIComponent(currency)}&adaptive=${encodeURIComponent(adaptive)}&authToken=${encodeURIComponent(token)}`;
 
@@ -294,7 +295,7 @@ export class CommonApiFunctionsService {
       );
     }
 
-    this.logger.debug(`[resolveHost] Using default host: localhost`);
-    return 'gscr.chicken-road-twoinout.live';
+    this.logger.debug(`[resolveHost] Using default host: ${DEFAULTS.FRONTEND.DEFAULT_HOST}`);
+    return DEFAULTS.FRONTEND.DEFAULT_HOST;
   }
 }

@@ -1,16 +1,5 @@
 import { registerAs } from '@nestjs/config';
-
-/**
- * Default fallback values for Redis configuration.
- */
-const DEFAULTS = {
-  /** Redis server host address */
-  HOST: 'localhost',
-  /** Redis default port */
-  PORT: 6379,
-  /** Redis authentication password (empty if auth is disabled) */
-  PASSWORD: '',
-} as const;
+import { DEFAULTS } from './defaults.config';
 
 /**
  * Redis configuration interface
@@ -39,8 +28,8 @@ export interface RedisConfig {
 export default registerAs(
   'redis',
   (): RedisConfig => ({
-    host: process.env.REDIS_HOST || DEFAULTS.HOST,
-    port: parseInt(process.env.REDIS_PORT || String(DEFAULTS.PORT), 10),
-    password: process.env.REDIS_PASSWORD || DEFAULTS.PASSWORD,
+    host: process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    password: process.env.REDIS_PASSWORD || '',
   }),
 );

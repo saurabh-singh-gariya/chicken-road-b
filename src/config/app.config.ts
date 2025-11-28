@@ -1,17 +1,5 @@
 import { registerAs } from '@nestjs/config';
-
-/**
- * Default fallback values for application configuration.
- * These values are used when environment variables are not set.
- */
-const DEFAULTS = {
-  /** Default application port */
-  PORT: 3000,
-  /** Default environment name */
-  ENV: 'production',
-  /** Whether authentication is enabled by default */
-  ENABLE_AUTH: true,
-} as const;
+import { DEFAULTS } from './defaults.config';
 
 /**
  * Application configuration interface
@@ -40,11 +28,11 @@ export interface AppConfig {
 export default registerAs(
   'app',
   (): AppConfig => ({
-    port: parseInt(process.env.APP_PORT || String(DEFAULTS.PORT), 10),
-    env: process.env.APP_ENV || DEFAULTS.ENV,
+    port: parseInt(process.env.APP_PORT || String(DEFAULTS.APP.PORT), 10),
+    env: process.env.APP_ENV || DEFAULTS.APP.ENV,
     enableAuth:
       process.env.ENABLE_AUTH === undefined
-        ? DEFAULTS.ENABLE_AUTH
+        ? DEFAULTS.APP.ENABLE_AUTH
         : process.env.ENABLE_AUTH !== 'false',
   }),
 );

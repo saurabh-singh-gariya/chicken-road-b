@@ -7,6 +7,7 @@ import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exception.filter';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
 import { WinstonLoggerService } from './common/logger/winston-logger.service';
+import { DEFAULTS } from './config/defaults.config';
 
 async function bootstrap() {
   const winstonLogger = new WinstonLoggerService();
@@ -63,7 +64,7 @@ async function bootstrap() {
   );
 
   const configService = app.get(ConfigService);
-  const port = configService.get<number>('app.port') || 3000;
+  const port = configService.get<number>('app.port') || DEFAULTS.APP.PORT;
   await app.listen(port);
   const enableAuth = configService.get<boolean>('app.enableAuth');
   const envName = configService.get<string>('app.env');

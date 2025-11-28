@@ -9,6 +9,7 @@ import { GameConfigService } from '../gameConfig/game-config.service';
 import { RedisService } from '../redis/redis.service';
 import { HazardGeneratorService } from './hazard-generator.service';
 import { HazardState } from './interfaces/hazard-state.interface';
+import { DEFAULTS } from '../../config/defaults.config';
 
 /**
  * Manages global hazard column rotation across all difficulties
@@ -27,19 +28,19 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
 
   // Hardcoded default configuration (used if DB config not available)
   private readonly DEFAULT_CONFIG = {
-    totalColumns: 15,
-    hazardRefreshMs: 5000,
+    totalColumns: DEFAULTS.hazardConfig.totalColumns,
+    hazardRefreshMs: DEFAULTS.hazardConfig.hazardRefreshMs,
     hazards: {
-      [Difficulty.EASY]: 3,
-      [Difficulty.MEDIUM]: 4,
-      [Difficulty.HARD]: 5,
-      [Difficulty.DAREDEVIL]: 7,
+      [Difficulty.EASY]: DEFAULTS.hazardConfig.hazards.EASY,
+      [Difficulty.MEDIUM]: DEFAULTS.hazardConfig.hazards.MEDIUM,
+      [Difficulty.HARD]: DEFAULTS.hazardConfig.hazards.HARD,
+      [Difficulty.DAREDEVIL]: DEFAULTS.hazardConfig.hazards.DAREDEVIL,
     },
   };
 
   // Active configuration (loaded from DB or defaults)
-  private totalColumns = this.DEFAULT_CONFIG.totalColumns;
-  private defaultRefreshMs = this.DEFAULT_CONFIG.hazardRefreshMs;
+  private totalColumns: number = this.DEFAULT_CONFIG.totalColumns;
+  private defaultRefreshMs: number = this.DEFAULT_CONFIG.hazardRefreshMs;
   constructor(
     private readonly redisService: RedisService,
     private readonly gameConfigService: GameConfigService,
@@ -78,11 +79,11 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
         typeof config.hazardRefreshMs === 'number'
       ) {
         const val = config.hazardRefreshMs;
-        if (val >= 2000 && val <= 30000) {
+        if (val >= DEFAULTS.GAME.HAZARD_REFRESH_MIN_MS && val <= DEFAULTS.GAME.HAZARD_REFRESH_MAX_MS) {
           this.defaultRefreshMs = val;
         } else {
           this.logger.warn(
-            `⚠️ Invalid hazardRefreshMs: ${val}ms (must be 2000-30000), using default`,
+            `⚠️ Invalid hazardRefreshMs: ${val}ms (must be ${DEFAULTS.GAME.HAZARD_REFRESH_MIN_MS}-${DEFAULTS.GAME.HAZARD_REFRESH_MAX_MS}), using default`,
           );
         }
       }
@@ -104,7 +105,7 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
     } catch {
       // Fall through to default
     }
-    return this.DEFAULT_CONFIG.hazards[difficulty];
+    return DEFAULTS.hazardConfig.hazards[difficulty];
   }
 
   /**
@@ -145,7 +146,7 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
     this.states[difficulty] = state;
 
     // Store in Redis with TTL slightly longer than refresh interval
-    const ttlSeconds = Math.ceil((this.defaultRefreshMs * 1.5) / 1000);
+    const ttlSeconds = Math.ceil((this.defaultRefreshMs * DEFAULTS.GAME.HAZARD_TTL_MULTIPLIER) / 1000);
     await this.redisService.set(this.redisKey(difficulty), state, ttlSeconds);
 
     // Optional: Store in history
@@ -247,7 +248,7 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
       const historyKey = `chicken-road-hazards-history-${difficulty}`;
       const client = this.redisService.getClient();
       await client.lpush(historyKey, JSON.stringify(state));
-      await client.ltrim(historyKey, 0, 19);
+      await client.ltrim(historyKey, 0, DEFAULTS.GAME.HAZARD_HISTORY_LIMIT - 1);
     } catch (error) {
       // Silently fail
     }
@@ -351,8 +352,8 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
    * (Call this if config changes at runtime)
    */
   async updateRefreshInterval(newIntervalMs: number) {
-    if (newIntervalMs < 2000 || newIntervalMs > 30000) {
-      throw new Error('Refresh interval must be between 2000ms and 30000ms');
+    if (newIntervalMs < DEFAULTS.GAME.HAZARD_REFRESH_MIN_MS || newIntervalMs > DEFAULTS.GAME.HAZARD_REFRESH_MAX_MS) {
+      throw new Error(`Refresh interval must be between ${DEFAULTS.GAME.HAZARD_REFRESH_MIN_MS}ms and ${DEFAULTS.GAME.HAZARD_REFRESH_MAX_MS}ms`);
     }
 
     this.defaultRefreshMs = newIntervalMs;

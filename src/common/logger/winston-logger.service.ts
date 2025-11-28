@@ -2,6 +2,7 @@ import { Injectable, LoggerService } from '@nestjs/common';
 import * as winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import * as path from 'path';
+import { DEFAULTS } from '../../config/defaults.config';
 
 @Injectable()
 export class WinstonLoggerService implements LoggerService {
@@ -14,7 +15,7 @@ export class WinstonLoggerService implements LoggerService {
   ];
 
   constructor() {
-    const logDir = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
+    const logDir = process.env.LOG_DIR || path.join(process.cwd(), DEFAULTS.LOGGER.DEFAULT_LOG_DIR);
 
     const logFormat = winston.format.combine(
       winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -71,7 +72,7 @@ export class WinstonLoggerService implements LoggerService {
     }
 
     this.logger = winston.createLogger({
-      level: process.env.LOG_LEVEL || 'info',
+      level: process.env.LOG_LEVEL || DEFAULTS.LOGGER.DEFAULT_LEVEL,
       transports,
       exitOnError: false,
     });
