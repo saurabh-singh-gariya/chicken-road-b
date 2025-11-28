@@ -342,6 +342,148 @@ export class SingleWalletFunctionsService {
           `Failed to log wallet error to database: ${logError}`,
         );
       }
+      throw err;
+    }
+  }
+
+  async refundBet(
+    agentId: string,
+    userId: string,
+    refundTransactions: Array<{
+      platformTxId: string;
+      refundPlatformTxId: string;
+      betAmount: number;
+      winAmount: number;
+      turnover?: number;
+      betTime: string;
+      updateTime: string;
+      roundId: string;
+      gamePayloads: {
+        platform: string;
+        gameType: string;
+        gameCode: string;
+        gameName: string;
+        betType?: string | null;
+        currency?: string;
+      };
+      gameInfo?: any;
+    }>,
+  ): Promise<{
+    balance: number;
+    balanceTs: string | null;
+    status: string;
+    userId: string | null;
+    raw: any;
+  }> {
+    const { callbackURL, cert } = await this.resolveAgent(agentId);
+    const url = callbackURL;
+    const currency = refundTransactions[0]?.gamePayloads?.currency || DEFAULTS.CURRENCY.DEFAULT;
+
+    // Build transaction array from refund transactions
+    const txns = refundTransactions.map((refundTxn) => {
+      const txn: any = {
+        platformTxId: refundTxn.platformTxId,
+        userId,
+        platform: refundTxn.gamePayloads.platform,
+        gameType: refundTxn.gamePayloads.gameType,
+        gameCode: refundTxn.gamePayloads.gameCode,
+        gameName: refundTxn.gamePayloads.gameName,
+        betType: refundTxn.gamePayloads.betType ?? null,
+        betAmount: Number(refundTxn.betAmount),
+        winAmount: Number(refundTxn.winAmount),
+        turnover: Number(refundTxn.turnover ?? 0),
+        betTime: refundTxn.betTime,
+        updateTime: refundTxn.updateTime,
+        roundId: refundTxn.roundId,
+        refundPlatformTxId: refundTxn.refundPlatformTxId,
+      };
+
+      // Add gameInfo if provided
+      if (refundTxn.gameInfo) {
+        txn.gameInfo = typeof refundTxn.gameInfo === 'string' 
+          ? refundTxn.gameInfo 
+          : JSON.stringify(refundTxn.gameInfo);
+      }
+
+      return txn;
+    });
+
+    const messageObj = { action: 'refund', txns };
+    const payload = { key: cert, message: JSON.stringify(messageObj) };
+    this.logger.debug(
+      `Calling refundBet url=${url} agent=${agentId} txns=${txns.length}`,
+    );
+    try {
+      const resp = await firstValueFrom(this.http.post<any>(url, payload));
+      const mappedResponse = this.mapAgentResponse(resp.data);
+      
+      // Check if agent rejected the refund
+      if (mappedResponse.status !== '0000') {
+        await this.walletErrorService.createError({
+          agentId,
+          userId,
+          apiAction: WalletApiAction.REFUND_BET,
+          errorType: WalletErrorType.AGENT_REJECTED,
+          errorMessage: `Agent rejected refund with status: ${mappedResponse.status}`,
+          requestPayload: { messageObj, url },
+          responseData: mappedResponse.raw,
+          httpStatus: resp.status,
+          platformTxId: refundTransactions[0]?.platformTxId,
+          roundId: refundTransactions[0]?.roundId,
+          betAmount: refundTransactions.reduce((sum, txn) => sum + txn.betAmount, 0),
+          winAmount: refundTransactions.reduce((sum, txn) => sum + txn.winAmount, 0),
+          currency,
+          callbackUrl: url,
+        });
+      }
+      
+      return mappedResponse;
+    } catch (err: any) {
+      this.logger.error(
+        `refundBet failed agent=${agentId} user=${userId}`,
+        err,
+      );
+
+      // Determine error type
+      let errorType = WalletErrorType.UNKNOWN_ERROR;
+      let httpStatus: number | undefined;
+      let responseData: any = null;
+
+      if (err.response) {
+        httpStatus = err.response.status;
+        responseData = err.response.data;
+        errorType = WalletErrorType.HTTP_ERROR;
+      } else if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+        errorType = WalletErrorType.NETWORK_ERROR;
+      } else if (err.code === 'ETIMEDOUT' || err.name === 'TimeoutError') {
+        errorType = WalletErrorType.TIMEOUT_ERROR;
+      }
+
+      // Log error to database
+      try {
+        await this.walletErrorService.createError({
+          agentId,
+          userId,
+          apiAction: WalletApiAction.REFUND_BET,
+          errorType,
+          errorMessage: err.message || 'Unknown error',
+          errorStack: err.stack,
+          requestPayload: { messageObj, url },
+          responseData,
+          httpStatus,
+          platformTxId: refundTransactions[0]?.platformTxId,
+          roundId: refundTransactions[0]?.roundId,
+          betAmount: refundTransactions.reduce((sum, txn) => sum + txn.betAmount, 0),
+          winAmount: refundTransactions.reduce((sum, txn) => sum + txn.winAmount, 0),
+          currency,
+          callbackUrl: url,
+          rawError: JSON.stringify(err),
+        });
+      } catch (logError) {
+        this.logger.error(
+          `Failed to log wallet error to database: ${logError}`,
+        );
+      }
 
       throw err;
     }

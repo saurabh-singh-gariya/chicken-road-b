@@ -10,6 +10,7 @@ export enum WalletApiAction {
   GET_BALANCE = 'getBalance',
   PLACE_BET = 'placeBet',
   SETTLE_BET = 'settleBet',
+  REFUND_BET = 'refundBet',
 }
 
 export enum WalletErrorType {

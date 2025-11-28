@@ -214,4 +214,22 @@ export class BetService {
     }
     return count;
   }
+
+  /**
+   * Find all PLACED bets that are older than the specified time threshold
+   * Checks both betPlacedAt and createdAt to handle cases where betPlacedAt might be null
+   * @param olderThanMs - Time threshold in milliseconds
+   * @returns Array of bets that need to be refunded
+   */
+  async findOldPlacedBets(olderThanMs: number): Promise<Bet[]> {
+    const thresholdDate = new Date(Date.now() - olderThanMs);
+    return this.repo
+      .createQueryBuilder('bet')
+      .where('bet.status = :status', { status: BetStatus.PLACED })
+      .andWhere(
+        '(bet.betPlacedAt < :threshold OR (bet.betPlacedAt IS NULL AND bet.createdAt < :threshold))',
+        { threshold: thresholdDate },
+      )
+      .getMany();
+  }
 }

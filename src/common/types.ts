@@ -29,10 +29,7 @@ export interface ApiResponse<T = any> {
  * Standard error response structure
  */
 export interface ErrorResponse {
-  /** Error status code */
-  status: string;
-  /** Error description message */
-  desc: string;
-  /** Optional error details */
-  details?: any;
+  error: {
+    message: string;
+  };
 }

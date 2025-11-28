@@ -21,6 +21,7 @@ import { UserService } from '../../modules/user/user.service';
 import { LastWinBroadcasterService } from '../../modules/last-win/last-win-broadcaster.service';
 import { FairnessService } from '../../modules/fairness/fairness.service';
 import { DEFAULTS } from '../../config/defaults.config';
+import { ErrorResponse } from '../../common/types';
 
 const WS_EVENTS = {
   CONNECTION_ERROR: 'connection-error',
@@ -66,6 +67,14 @@ interface MyDataEvent {
   userId: string;
   nickname: string;
   gameAvatar: string | null;
+}
+
+/**
+ * Format error response in the required websocket format
+ * Format: [{"error":{"message":"error message"}}]
+ */
+function formatErrorResponse(errorMessage: string): ErrorResponse {
+  return { error: { message: errorMessage } };
 }
 
 @WebSocketGateway({
@@ -460,7 +469,7 @@ export class GamePlayGateway
         if (typeof ack !== 'function') return;
 
         const rawAction: string | undefined = data?.action;
-        if (!rawAction) return ack({ error: ERROR_RESPONSES.MISSING_ACTION });
+        if (!rawAction) return ack(formatErrorResponse(ERROR_RESPONSES.MISSING_ACTION));
 
         if (rawAction === GameAction.GET_GAME_CONFIG) {
           this.gamePlayService
@@ -473,7 +482,7 @@ export class GamePlayGateway
             })
             .catch((e) => {
               this.logger.error(`ACK game config failed: ${e}`);
-              ack({ error: ERROR_RESPONSES.CONFIG_FETCH_FAILED });
+              ack(formatErrorResponse(ERROR_RESPONSES.CONFIG_FETCH_FAILED));
             });
           return;
         }
@@ -485,14 +494,14 @@ export class GamePlayGateway
           const userId: string | undefined = sock.data?.userId;
           const agentId: string | undefined = sock.data?.agentId;
           if (!userId || !agentId) {
-            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+            return ack(formatErrorResponse(ERROR_RESPONSES.MISSING_USER_OR_AGENT));
           }
           this.gamePlayService
             .getGameSeeds(userId, agentId)
             .then((r) => ack(r))
             .catch((e) => {
               this.logger.error(`Get game seeds failed: ${e}`);
-              ack({ error: 'get_game_seeds_failed' });
+              ack(formatErrorResponse('get_game_seeds_failed'));
             });
           return;
         }
@@ -502,17 +511,17 @@ export class GamePlayGateway
           const agentId: string | undefined = sock.data?.agentId;
           const userSeed: string | undefined = data?.payload?.userSeed;
           if (!userId || !agentId) {
-            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+            return ack(formatErrorResponse(ERROR_RESPONSES.MISSING_USER_OR_AGENT));
           }
           if (!userSeed || typeof userSeed !== 'string') {
-            return ack({ error: 'missing_user_seed' });
+            return ack(formatErrorResponse('missing_user_seed'));
           }
           this.gamePlayService
             .setUserSeed(userId, agentId, userSeed)
             .then((r) => ack(r))
             .catch((e) => {
               this.logger.error(`Set user seed failed: ${e}`);
-              ack({ error: e.message || 'set_user_seed_failed' });
+              ack(formatErrorResponse(e.message || 'set_user_seed_failed'));
             });
           return;
         }
@@ -525,10 +534,7 @@ export class GamePlayGateway
             this.logger.warn(
               `Bet action missing context: socket=${sock.id} userId=${userId} agentId=${agentId} gameMode=${gameMode}`,
             );
-            return ack({
-              error: ERROR_RESPONSES.MISSING_CONTEXT,
-              details: { userId, agentId, gameMode },
-            });
+            return ack(formatErrorResponse(ERROR_RESPONSES.MISSING_CONTEXT));
           }
           this.logger.debug(
             `Bet action received: socket=${sock.id} user=${userId} agent=${agentId} payload=${JSON.stringify(data?.payload)}`,
@@ -537,8 +543,13 @@ export class GamePlayGateway
             .performBetFlow(userId, agentId, gameMode, data?.payload)
             .then(async (resp) => {
               // Emit onBalanceChange after successful bet
-              ack(resp);
-              if (!('error' in resp)) {
+              if ('error' in resp) {
+                ack(formatErrorResponse(resp.error));
+                this.logger.warn(
+                  `Bet failed - no balance update: socket=${sock.id} user=${userId} error=${resp.error}`,
+                );
+              } else {
+                ack(resp);
                 const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
                 const balanceEvent: BalanceEventPayload = {
                   currency: DEFAULTS.CURRENCY.DEFAULT,
@@ -548,15 +559,11 @@ export class GamePlayGateway
                 this.logger.log(
                   `Balance updated after bet: socket=${sock.id} user=${userId} balance=${walletBalance.balance} currency=${DEFAULTS.CURRENCY.DEFAULT}`,
                 );
-              } else {
-                this.logger.warn(
-                  `Bet failed - no balance update: socket=${sock.id} user=${userId} error=${resp.error}`,
-                );
               }
             })
             .catch((e) => {
               this.logger.error(`Bet flow failed for socket ${sock.id}: ${e}`);
-              ack({ error: ERROR_RESPONSES.BET_FAILED });
+              ack(formatErrorResponse(ERROR_RESPONSES.BET_FAILED));
             });
           return;
         }
@@ -569,14 +576,14 @@ export class GamePlayGateway
             this.logger.warn(
               `Step action missing user/agent: socket=${sock.id} userId=${userId} agentId=${agentId}`,
             );
-            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+            return ack(formatErrorResponse(ERROR_RESPONSES.MISSING_USER_OR_AGENT));
           }
           const lineNumber = Number(data?.payload?.lineNumber);
           if (!isFinite(lineNumber)) {
             this.logger.warn(
               `Invalid line number: socket=${sock.id} user=${userId} lineNumber=${data?.payload?.lineNumber}`,
             );
-            return ack({ error: ERROR_RESPONSES.INVALID_LINE_NUMBER });
+            return ack(formatErrorResponse(ERROR_RESPONSES.INVALID_LINE_NUMBER));
           }
 
           this.logger.debug(
@@ -585,7 +592,9 @@ export class GamePlayGateway
           this.gamePlayService
             .performStepFlow(userId, agentId, lineNumber)
             .then(async (r) => {
-              if (!('error' in r) && r.isFinished) {
+              if ('error' in r) {
+                ack(formatErrorResponse(r.error));
+              } else if (r.isFinished) {
                 const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
                 const balanceEvent: BalanceEventPayload = {
                   currency: r.currency,
@@ -602,7 +611,7 @@ export class GamePlayGateway
             })
             .catch((e) => {
               this.logger.error(`Step flow failed: ${e}`);
-              ack({ error: ERROR_RESPONSES.STEP_FAILED });
+              ack(formatErrorResponse(ERROR_RESPONSES.STEP_FAILED));
             });
           return;
         }
@@ -614,7 +623,7 @@ export class GamePlayGateway
             this.logger.warn(
               `Cashout action missing user/agent: socket=${sock.id} userId=${userId} agentId=${agentId}`,
             );
-            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+            return ack(formatErrorResponse(ERROR_RESPONSES.MISSING_USER_OR_AGENT));
           }
           this.logger.debug(
             `Cashout action received: socket=${sock.id} user=${userId} agent=${agentId}`,
@@ -623,8 +632,13 @@ export class GamePlayGateway
             .performCashOutFlow(userId, agentId)
             .then(async (r) => {
               // Emit onBalanceChange after successful cashout
-              ack(r);
-              if (!('error' in r)) {
+              if ('error' in r) {
+                ack(formatErrorResponse(r.error));
+                this.logger.warn(
+                  `Cashout failed - no balance update: socket=${sock.id} user=${userId} error=${r.error}`,
+                );
+              } else {
+                ack(r);
                 const walletBalance = await this.singleWalletFunctionsService.getBalance(agentId, userId);
                 const balanceEvent: BalanceEventPayload = {
                   currency: DEFAULTS.CURRENCY.DEFAULT,
@@ -634,15 +648,11 @@ export class GamePlayGateway
                 this.logger.log(
                   `Balance updated after cashout: socket=${sock.id} user=${userId} balance=${walletBalance.balance} currency=${DEFAULTS.CURRENCY.DEFAULT}`,
                 );
-              } else {
-                this.logger.warn(
-                  `Cashout failed - no balance update: socket=${sock.id} user=${userId} error=${r.error}`,
-                );
               }
             })
             .catch((e) => {
               this.logger.error(`Cashout flow failed: ${e}`);
-              ack({ error: ERROR_RESPONSES.CASHOUT_FAILED });
+              ack(formatErrorResponse(ERROR_RESPONSES.CASHOUT_FAILED));
             });
           return;
         }
@@ -652,14 +662,20 @@ export class GamePlayGateway
           const agentId: string | undefined = sock.data?.agentId;
           this.logger.log(`Get game session action received: socket=${sock.id} user=${userId} agent=${agentId}`);
           if (!userId || !agentId) {
-            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+            return ack(formatErrorResponse(ERROR_RESPONSES.MISSING_USER_OR_AGENT));
           }
           this.gamePlayService
             .performGetSessionFlow(userId, agentId)
-            .then((r) => ack(r))
+            .then((r) => {
+              if ('error' in r) {
+                ack(formatErrorResponse(r.error));
+              } else {
+                ack(r);
+              }
+            })
             .catch((e) => {
               this.logger.error(`Get session flow failed: ${e}`);
-              ack({ error: ERROR_RESPONSES.GET_SESSION_FAILED });
+              ack(formatErrorResponse(ERROR_RESPONSES.GET_SESSION_FAILED));
             });
           return;
         }
@@ -669,7 +685,7 @@ export class GamePlayGateway
           const agentId: string | undefined = sock.data?.agentId;
           this.logger.log(`Get game state action received: socket=${sock.id} user=${userId} agent=${agentId}`);
           if (!userId || !agentId) {
-            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+            return ack(formatErrorResponse(ERROR_RESPONSES.MISSING_USER_OR_AGENT));
           }
           this.gamePlayService
             .performGetGameStateFlow(userId, agentId)
@@ -685,14 +701,14 @@ export class GamePlayGateway
           const userId: string | undefined = sock.data?.userId;
           const agentId: string | undefined = sock.data?.agentId;
           if (!userId || !agentId) {
-            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+            return ack(formatErrorResponse(ERROR_RESPONSES.MISSING_USER_OR_AGENT));
           }
           this.gamePlayService
             .getMyBetsHistory(userId, agentId)
             .then((bets) => ack(bets))
             .catch((e) => {
               this.logger.error(`Get bet history failed: ${e}`);
-              ack({ error: 'get_bet_history_failed' });
+              ack(formatErrorResponse('get_bet_history_failed'));
             });
           return;
         }
@@ -700,12 +716,7 @@ export class GamePlayGateway
         if (knownPlaceholders.includes(rawAction as GameAction)) {
           return ack(null);
         }
-        return ack(
-          {
-            action: rawAction,
-            status: 'unsupported_action',
-          },
-        );
+        return ack(formatErrorResponse(ERROR_RESPONSES.UNSUPPORTED_ACTION));
       };
       sock.prependListener(WS_EVENTS.GAME_SERVICE, ackHandler);
 
@@ -719,7 +730,7 @@ export class GamePlayGateway
         this.logger.log(`Bet history request received: socket=${sock.id} user=${userId} agent=${agentId}`);
         
         if (!userId || !agentId) {
-          return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+          return ack(formatErrorResponse(ERROR_RESPONSES.MISSING_USER_OR_AGENT));
         }
         
         this.gamePlayService
@@ -727,7 +738,7 @@ export class GamePlayGateway
           .then((bets) => ack(bets))
           .catch((e) => {
             this.logger.error(`Get bet history failed: ${e}`);
-            ack({ error: 'get_bet_history_failed' });
+            ack(formatErrorResponse('get_bet_history_failed'));
           });
       };
       
