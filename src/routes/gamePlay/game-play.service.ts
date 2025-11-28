@@ -246,7 +246,8 @@ export class GamePlayService {
     this.logger.debug(
       `Creating game session in Redis: user=${userId} agent=${agentId} key=${redisKey} step=${session.currentStep}`,
     );
-    await this.redisService.set(redisKey, session);
+    const sessionTTL = await this.redisService.getSessionTTL();
+    await this.redisService.set(redisKey, session, sessionTTL);
 
     const resp: BetStepResponse = {
       isFinished: false,
@@ -351,7 +352,8 @@ export class GamePlayService {
         ? Number(gameSession.coefficients[gameSession.currentStep])
         : 0;
 
-    await this.redisService.set(redisKey, gameSession);
+    const sessionTTL = await this.redisService.getSessionTTL();
+    await this.redisService.set(redisKey, gameSession, sessionTTL);
 
     const gamePayloads = await this.gameConfigService.getChickenRoadGamePayloads();
 
@@ -499,7 +501,8 @@ export class GamePlayService {
         ? Number(gameSession.coefficients[gameSession.currentStep])
         : 0;
 
-    await this.redisService.set(redisKey, gameSession);
+    const sessionTTL = await this.redisService.getSessionTTL();
+    await this.redisService.set(redisKey, gameSession, sessionTTL);
 
     const settlementAmount = gameSession.winAmount;
 
@@ -628,6 +631,47 @@ export class GamePlayService {
 
     if (!gameSession) {
       return { error: 'no_session' };
+    }
+
+    const currentMultiplier = this.getStepCoeff(
+      gameSession,
+      gameSession.currentStep,
+    );
+
+    let endReason: 'win' | 'cashout' | 'hazard' | undefined;
+    if (!gameSession.isActive) {
+      if (gameSession.isWin) {
+        endReason = 'win';
+      } else if (gameSession.collisionColumns) {
+        endReason = 'hazard';
+      } else {
+        endReason = 'cashout';
+      }
+    }
+
+    return this.sendStepResponse(
+      gameSession.isActive,
+      gameSession.isWin,
+      gameSession.currentStep,
+      gameSession.winAmount,
+      gameSession.betAmount,
+      currentMultiplier,
+      gameSession.difficulty,
+      gameSession.currency,
+      endReason,
+      gameSession.collisionColumns,
+    );
+  }
+
+  async performGetGameStateFlow(
+    userId: string,
+    agentId: string,
+  ): Promise<BetStepResponse | null> {
+    const redisKey = `gameSession:${userId}-${agentId}`;
+    const gameSession: GameSession = await this.redisService.get<any>(redisKey);
+
+    if (!gameSession) {
+      return null;
     }
 
     const currentMultiplier = this.getStepCoeff(

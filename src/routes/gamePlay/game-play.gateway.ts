@@ -219,14 +219,14 @@ export class GamePlayGateway
     // TEMPORARY: Clean up Redis and placed bets on disconnect
     //only if environment is not production
     // if (process.env.APP_ENV !== 'production' && process.env.APP_ENV !== 'staging' && process.env.APP_ENV !== 'development') {
-    try {
-      await this.gamePlayService.cleanupOnDisconnect();
-    } catch (error) {
-      this.logger.error(
-        `Failed to cleanup on disconnect for client ${client.id}: ${error.message}`,
-      );
-      // }
-    }
+    // try {
+    //   await this.gamePlayService.cleanupOnDisconnect();
+    // } catch (error) {
+    //   this.logger.error(
+    //     `Failed to cleanup on disconnect for client ${client.id}: ${error.message}`,
+    //   );
+    //   // }
+    // }
   }
 
   // @SubscribeMessage(WS_EVENTS.GAME_SERVICE)
@@ -479,7 +479,6 @@ export class GamePlayGateway
         }
         const knownPlaceholders: GameAction[] = [
           GameAction.GET_GAME_SESSION,
-          GameAction.GET_GAME_STATE
         ];
 
         if (rawAction === GameAction.GET_GAME_SEEDS) {
@@ -661,6 +660,23 @@ export class GamePlayGateway
             .catch((e) => {
               this.logger.error(`Get session flow failed: ${e}`);
               ack({ error: ERROR_RESPONSES.GET_SESSION_FAILED });
+            });
+          return;
+        }
+
+        if (rawAction === GameAction.GET_GAME_STATE) {
+          const userId: string | undefined = sock.data?.userId;
+          const agentId: string | undefined = sock.data?.agentId;
+          this.logger.log(`Get game state action received: socket=${sock.id} user=${userId} agent=${agentId}`);
+          if (!userId || !agentId) {
+            return ack({ error: ERROR_RESPONSES.MISSING_USER_OR_AGENT });
+          }
+          this.gamePlayService
+            .performGetGameStateFlow(userId, agentId)
+            .then((r) => ack(r))
+            .catch((e) => {
+              this.logger.error(`Get game state flow failed: ${e}`);
+              ack(null);
             });
           return;
         }
