@@ -352,8 +352,12 @@ export class GamePlayService {
         ? Number(gameSession.coefficients[gameSession.currentStep])
         : 0;
 
-    const sessionTTL = await this.redisService.getSessionTTL();
-    await this.redisService.set(redisKey, gameSession, sessionTTL);
+    // Only save session to Redis if it's still active
+    // Completed sessions will be deleted after settlement
+    if (gameSession.isActive) {
+      const sessionTTL = await this.redisService.getSessionTTL();
+      await this.redisService.set(redisKey, gameSession, sessionTTL);
+    }
 
     const gamePayloads = await this.gameConfigService.getChickenRoadGamePayloads();
 
@@ -426,6 +430,19 @@ export class GamePlayService {
             `Failed to rotate seeds after settlement: user=${userId} agent=${agentId} error=${rotateError.message}`,
           );
           // Don't fail settlement if seed rotation fails
+        }
+
+        // Delete completed session from Redis after successful settlement
+        try {
+          await this.redisService.del(redisKey);
+          this.logger.log(
+            `Deleted completed game session from Redis: user=${userId} agent=${agentId} endReason=${endReason} key=${redisKey}`,
+          );
+        } catch (deleteError) {
+          this.logger.warn(
+            `Failed to delete completed session from Redis: user=${userId} agent=${agentId} error=${deleteError.message}`,
+          );
+          // Don't fail settlement if Redis deletion fails
         }
       } catch (error: any) {
         this.logger.error(
@@ -501,9 +518,7 @@ export class GamePlayService {
         ? Number(gameSession.coefficients[gameSession.currentStep])
         : 0;
 
-    const sessionTTL = await this.redisService.getSessionTTL();
-    await this.redisService.set(redisKey, gameSession, sessionTTL);
-
+    // Don't save completed session to Redis - it will be deleted after settlement
     const settlementAmount = gameSession.winAmount;
 
     this.logger.log(
@@ -573,6 +588,19 @@ export class GamePlayService {
         );
         // Don't fail cashout if seed rotation fails
       }
+
+      // Delete completed session from Redis after successful cashout settlement
+      try {
+        await this.redisService.del(redisKey);
+        this.logger.log(
+          `Deleted completed game session from Redis after cashout: user=${userId} agent=${agentId} key=${redisKey}`,
+        );
+      } catch (deleteError) {
+        this.logger.warn(
+          `Failed to delete completed session from Redis after cashout: user=${userId} agent=${agentId} error=${deleteError.message}`,
+        );
+        // Don't fail cashout if Redis deletion fails
+      }
     } catch (error: any) {
       this.logger.error(
         `Cashout settlement failed: user=${userId} txId=${gameSession.platformBetTxId}`,
@@ -633,6 +661,21 @@ export class GamePlayService {
       return { error: 'no_session' };
     }
 
+    // If session is completed, delete it from Redis and return error
+    if (!gameSession.isActive) {
+      try {
+        await this.redisService.del(redisKey);
+        this.logger.log(
+          `Deleted completed session from Redis in get-session: user=${userId} agent=${agentId} key=${redisKey}`,
+        );
+      } catch (deleteError) {
+        this.logger.warn(
+          `Failed to delete completed session from Redis in get-session: user=${userId} agent=${agentId} error=${deleteError.message}`,
+        );
+      }
+      return { error: 'session_completed' };
+    }
+
     const currentMultiplier = this.getStepCoeff(
       gameSession,
       gameSession.currentStep,
@@ -671,6 +714,21 @@ export class GamePlayService {
     const gameSession: GameSession = await this.redisService.get<any>(redisKey);
 
     if (!gameSession) {
+      return null;
+    }
+
+    // If session is completed, delete it from Redis and return null
+    if (!gameSession.isActive) {
+      try {
+        await this.redisService.del(redisKey);
+        this.logger.log(
+          `Deleted completed session from Redis in get-game-state: user=${userId} agent=${agentId} key=${redisKey}`,
+        );
+      } catch (deleteError) {
+        this.logger.warn(
+          `Failed to delete completed session from Redis in get-game-state: user=${userId} agent=${agentId} error=${deleteError.message}`,
+        );
+      }
       return null;
     }
 
