@@ -153,7 +153,7 @@ export const DEFAULTS = {
   // Online Counter Configuration
   ONLINE_COUNTER: {
     PUMP_VALUE_CONFIG_KEY: 'onlineCounter.pumpValue',
-    DEFAULT_PUMP_VALUE: 100,
+    DEFAULT_PUMP_VALUE: 11000,
   },
 
   // JWT Configuration

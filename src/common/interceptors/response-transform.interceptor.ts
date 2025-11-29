@@ -15,7 +15,15 @@ interface ResponseWithStatus {
 
 @Injectable()
 export class ResponseTransformInterceptor implements NestInterceptor {
-  intercept(_context: ExecutionContext, next: CallHandler): Observable<any> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const request = context.switchToHttp().getRequest();
+    const path = request.url;
+    
+    // Skip transformation for online-counter endpoint (should not have status field)
+    if (path === '/api/online-counter/v1/data') {
+      return next.handle();
+    }
+    
     return next.handle().pipe(map((data) => this.transformResponse(data)));
   }
 
