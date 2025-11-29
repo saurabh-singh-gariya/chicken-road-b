@@ -3,6 +3,7 @@ import { ERROR_CODES } from '../../common/constants';
 import { Agents } from '../../entities/agents.entity';
 import { GameConfigService } from '../../modules/gameConfig/game-config.service';
 import { JwtTokenService } from '../../modules/jwt/jwt-token.service';
+import { UserSessionService } from '../../modules/user-session/user-session.service';
 import { CreateUserParams, UserService } from '../../modules/user/user.service';
 import { CreateMemberBodyDto } from './DTO/create-member.dto';
 import { DEFAULTS } from '../../config/defaults.config';
@@ -15,6 +16,7 @@ export class CommonApiFunctionsService {
     private readonly userService: UserService,
     private readonly gameConfigService: GameConfigService,
     private readonly jwtTokenService: JwtTokenService,
+    private readonly userSessionService: UserSessionService,
   ) {}
 
   async createMember(
@@ -177,6 +179,9 @@ export class CommonApiFunctionsService {
     
     const url = `https://${host}/index.html?gameMode=${encodeURIComponent(gameMode)}&operatorId=${encodeURIComponent(agentId)}&lang=${encodeURIComponent(lang)}&currency=${encodeURIComponent(currency)}&adaptive=${encodeURIComponent(adaptive)}&authToken=${encodeURIComponent(token)}`;
 
+    // Add user to logged-in sessions
+    await this.userSessionService.addSession(userId, agentId);
+
     this.logger.log(
       `[loginMember] SUCCESS - Login URL generated for userId: ${userId}, agentId: ${agentId}`,
     );
@@ -258,6 +263,9 @@ export class CommonApiFunctionsService {
       .split(',')
       .map((u) => u.trim())
       .filter(Boolean);
+
+    // Remove users from logged-in sessions
+    await this.userSessionService.removeSessions(logoutUsers, agentId);
 
     this.logger.log(
       `[logoutUsers] SUCCESS - Logged out ${logoutUsers.length} users - agentId: ${agentId}, users: [${logoutUsers.join(', ')}]`,

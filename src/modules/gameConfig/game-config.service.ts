@@ -133,4 +133,47 @@ export class GameConfigService {
       return this.defaultGamePayloads;
     }
   }
+
+  async getOnlineCounterPumpValue(): Promise<number> {
+    try {
+      const configValue = await this.getConfig(DEFAULTS.ONLINE_COUNTER.PUMP_VALUE_CONFIG_KEY);
+      
+      // Handle different value types
+      let pumpValue: number;
+      if (typeof configValue === 'number') {
+        pumpValue = configValue;
+      } else if (typeof configValue === 'string') {
+        const parsed = Number(configValue);
+        if (isFinite(parsed) && !isNaN(parsed)) {
+          pumpValue = Math.max(0, Math.floor(parsed)); // Ensure non-negative integer
+        } else {
+          this.logger.warn(
+            `[getOnlineCounterPumpValue] Invalid pump value format: ${configValue}, using default: ${DEFAULTS.ONLINE_COUNTER.DEFAULT_PUMP_VALUE}`,
+          );
+          return DEFAULTS.ONLINE_COUNTER.DEFAULT_PUMP_VALUE;
+        }
+      } else {
+        this.logger.warn(
+          `[getOnlineCounterPumpValue] Invalid pump value type: ${typeof configValue}, using default: ${DEFAULTS.ONLINE_COUNTER.DEFAULT_PUMP_VALUE}`,
+        );
+        return DEFAULTS.ONLINE_COUNTER.DEFAULT_PUMP_VALUE;
+      }
+
+      this.logger.debug(
+        `[getOnlineCounterPumpValue] Loaded pump value: ${pumpValue} from config key: ${DEFAULTS.ONLINE_COUNTER.PUMP_VALUE_CONFIG_KEY}`,
+      );
+      return pumpValue;
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        this.logger.debug(
+          `[getOnlineCounterPumpValue] Config not found, using default: ${DEFAULTS.ONLINE_COUNTER.DEFAULT_PUMP_VALUE}`,
+        );
+      } else {
+        this.logger.warn(
+          `[getOnlineCounterPumpValue] Error loading pump value: ${error.message}, using default: ${DEFAULTS.ONLINE_COUNTER.DEFAULT_PUMP_VALUE}`,
+        );
+      }
+      return DEFAULTS.ONLINE_COUNTER.DEFAULT_PUMP_VALUE;
+    }
+  }
 }

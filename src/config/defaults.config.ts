@@ -150,6 +150,12 @@ export const DEFAULTS = {
     SESSION_TTL_CONFIG_KEY: 'game.session.ttl.ms',
   },
 
+  // Online Counter Configuration
+  ONLINE_COUNTER: {
+    PUMP_VALUE_CONFIG_KEY: 'onlineCounter.pumpValue',
+    DEFAULT_PUMP_VALUE: 100,
+  },
+
   // JWT Configuration
   JWT: {
     DEFAULT_SECRET: 'CHANGE_ME_DEV_SECRET',

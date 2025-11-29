@@ -1,5 +1,7 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { GameConfigService } from '../../modules/gameConfig/game-config.service';
 import { JwtTokenService } from '../../modules/jwt/jwt-token.service';
+import { UserSessionService } from '../../modules/user-session/user-session.service';
 import { AuthLoginDto, AuthLoginResponse } from './DTO/auth-login.dto';
 import { OnlineCounterResponse } from './DTO/online-counter.dto';
 
@@ -7,7 +9,11 @@ import { OnlineCounterResponse } from './DTO/online-counter.dto';
 export class GameApiRoutesService {
   private readonly logger = new Logger(GameApiRoutesService.name);
 
-  constructor(private readonly jwtTokenService: JwtTokenService) {}
+  constructor(
+    private readonly jwtTokenService: JwtTokenService,
+    private readonly userSessionService: UserSessionService,
+    private readonly gameConfigService: GameConfigService,
+  ) {}
 
   async authenticateGame(dto: AuthLoginDto): Promise<AuthLoginResponse> {
     this.logger.log(
@@ -58,6 +64,9 @@ export class GameApiRoutesService {
       `[authenticateGame] SUCCESS - New token generated for userId: ${userId}, agentId: ${agentId}, operator: ${dto.operator}`,
     );
 
+    // Add user to logged-in sessions
+    await this.userSessionService.addSession(userId, agentId);
+
     // Return response with dummy data as requested
     return {
       success: true,
@@ -90,9 +99,18 @@ export class GameApiRoutesService {
     this.logger.log(
       `[getOnlineCounter] SUCCESS - Returning online counter data`,
     );
+    
+    const actualLoggedInUsers = await this.userSessionService.getLoggedInUserCount();
+    const pumpValue = await this.gameConfigService.getOnlineCounterPumpValue();
+    const total = Math.max(actualLoggedInUsers, actualLoggedInUsers + pumpValue);
+    
+    this.logger.log(
+      `[getOnlineCounter] User count - actual: ${actualLoggedInUsers}, pump: ${pumpValue}, total: ${total}`,
+    );
+    
     return {
       result: {
-        total: 12951,
+        total: total,
         gameMode: {
           'chicken-road-two': 7526,
           'sugar-daddy': 143,
