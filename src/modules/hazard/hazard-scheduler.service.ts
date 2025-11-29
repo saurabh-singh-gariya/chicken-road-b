@@ -109,31 +109,44 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Parse hazard configuration from database
+   * Handles both string and object formats safely
+   */
+  private async getHazardConfig(): Promise<{
+    totalColumns: number;
+    hazardRefreshMs: number;
+    hazards: Record<Difficulty, number>;
+  } | null> {
+    try {
+      const rawConfig = await this.gameConfigService.getConfig('hazardConfig');
+      // Config may be stored as string or already parsed object
+      const config =
+        typeof rawConfig === 'string' ? JSON.parse(rawConfig) : rawConfig;
+      return config;
+    } catch (error) {
+      this.logger.error(
+        `Error parsing hazard configuration: ${error.message}`,
+        error.stack,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Load configuration from database/config service
    */
   private async loadConfiguration() {
-    try {
-      const config = await this.gameConfigService.getConfig('hazardConfig');
-
-      if (config?.totalColumns && typeof config.totalColumns === 'number') {
-        this.totalColumns = config.totalColumns;
-      }
-
-      if (
-        config?.hazardRefreshMs &&
-        typeof config.hazardRefreshMs === 'number'
-      ) {
-        const val = config.hazardRefreshMs;
-        if (val >= DEFAULTS.GAME.HAZARD_REFRESH_MIN_MS && val <= DEFAULTS.GAME.HAZARD_REFRESH_MAX_MS) {
-          this.defaultRefreshMs = val;
-        } else {
-          this.logger.warn(
-            `⚠️ Invalid hazardRefreshMs: ${val}ms (must be ${DEFAULTS.GAME.HAZARD_REFRESH_MIN_MS}-${DEFAULTS.GAME.HAZARD_REFRESH_MAX_MS}), using default`,
-          );
-        }
-      }
-    } catch (error) {
-      this.logger.error(`Error loading hazard configuration: ${error.message}`, error.stack);
+    const config = await this.getHazardConfig();
+    if (config) {
+      this.totalColumns = config.totalColumns;
+      this.defaultRefreshMs = config.hazardRefreshMs;
+      this.logger.log(
+        `Hazard configuration loaded: totalColumns=${this.totalColumns} defaultRefreshMs=${this.defaultRefreshMs}`,
+      );
+    } else {
+      this.logger.warn(
+        'Using default hazard configuration (failed to load from database)',
+      );
     }
   }
 
@@ -141,14 +154,9 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
    * Get hazard count for a specific difficulty from config
    */
   private async getHazardCount(difficulty: Difficulty): Promise<number> {
-    try {
-      const config = await this.gameConfigService.getConfig('hazardConfig');
-      const count = config?.hazards?.[difficulty];
-      if (typeof count === 'number' && count > 0) {
-        return count;
-      }
-    } catch (error) {
-      this.logger.error(`Error getting hazard count for difficulty: ${difficulty}`, error.stack);
+    const config = await this.getHazardConfig();
+    if (config?.hazards?.[difficulty]) {
+      return config.hazards[difficulty];
     }
     return DEFAULTS.hazardConfig.hazards[difficulty];
   }
