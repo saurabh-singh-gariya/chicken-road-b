@@ -17,7 +17,7 @@ export interface HazardState {
  * Configuration for hazard rotation behavior
  */
 export interface HazardConfig {
-  totalColumns: number;
+  totalColumns: Record<Difficulty, number>; // Per-difficulty column count (matches coefficients array length)
   refreshIntervalMs: number;
   hazardCounts: Record<Difficulty, number>;
 }

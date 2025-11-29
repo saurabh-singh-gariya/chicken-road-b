@@ -46,7 +46,8 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
   };
 
   // Active configuration (loaded from DB or defaults)
-  private totalColumns: number = this.DEFAULT_CONFIG.totalColumns;
+  // totalColumns is per-difficulty, matching coefficients array length
+  private totalColumns: Record<Difficulty, number> = this.DEFAULT_CONFIG.totalColumns;
   private defaultRefreshMs: number = this.DEFAULT_CONFIG.hazardRefreshMs;
   
   constructor(
@@ -111,9 +112,10 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
   /**
    * Parse hazard configuration from database
    * Handles both string and object formats safely
+   * totalColumns can be single number (legacy) or per-difficulty object
    */
   private async getHazardConfig(): Promise<{
-    totalColumns: number;
+    totalColumns: number | Record<Difficulty, number>;
     hazardRefreshMs: number;
     hazards: Record<Difficulty, number>;
   } | null> {
@@ -138,16 +140,37 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
   private async loadConfiguration() {
     const config = await this.getHazardConfig();
     if (config) {
-      this.totalColumns = config.totalColumns;
+      // Handle both legacy (single number) and new (per-difficulty) formats
+      if (typeof config.totalColumns === 'number') {
+        // Legacy format: convert single number to per-difficulty object
+        this.logger.warn(
+          'Legacy totalColumns format detected (single number). Converting to per-difficulty format.',
+        );
+        this.totalColumns = {
+          [Difficulty.EASY]: config.totalColumns,
+          [Difficulty.MEDIUM]: config.totalColumns,
+          [Difficulty.HARD]: config.totalColumns,
+          [Difficulty.DAREDEVIL]: config.totalColumns,
+        };
+      } else {
+        this.totalColumns = config.totalColumns;
+      }
       this.defaultRefreshMs = config.hazardRefreshMs;
       this.logger.log(
-        `Hazard configuration loaded: totalColumns=${this.totalColumns} defaultRefreshMs=${this.defaultRefreshMs}`,
+        `Hazard configuration loaded: totalColumns=${JSON.stringify(this.totalColumns)} defaultRefreshMs=${this.defaultRefreshMs}`,
       );
     } else {
       this.logger.warn(
         'Using default hazard configuration (failed to load from database)',
       );
     }
+  }
+
+  /**
+   * Get total columns for a specific difficulty
+   */
+  private getTotalColumns(difficulty: Difficulty): number {
+    return this.totalColumns[difficulty] || DEFAULTS.hazardConfig.totalColumns[difficulty];
   }
 
   /**
@@ -176,14 +199,17 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
     const now = Date.now();
     const changeAt = now + this.defaultRefreshMs;
 
+    // Get total columns for this difficulty
+    const totalColumns = this.getTotalColumns(difficulty);
+
     // Generate initial current and next patterns
     const current = this.hazardGenerator.generateRandomPattern(
       hazardCount,
-      this.totalColumns,
+      totalColumns,
     );
     const next = this.hazardGenerator.generateRandomPattern(
       hazardCount,
-      this.totalColumns,
+      totalColumns,
     );
 
     const state: HazardState = {
@@ -289,16 +315,19 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
       );
       const prevState = prevStateRedis || this.states[difficulty];
 
+      // Get total columns for this difficulty
+      const totalColumns = this.getTotalColumns(difficulty);
+
       // Move 'next' to 'current', generate new 'next'
       const current =
         prevState?.next ||
         this.hazardGenerator.generateRandomPattern(
           hazardCount,
-          this.totalColumns,
+          totalColumns,
         );
       const next = this.hazardGenerator.generateRandomPattern(
         hazardCount,
-        this.totalColumns,
+        totalColumns,
       );
 
       const state: HazardState = {
