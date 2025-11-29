@@ -56,6 +56,7 @@ export const DEFAULTS = {
 
   // Game Configuration (runtime constants not stored in DB)
   GAME: {
+    LEADER_LEASE_TTL: 5, // seconds
     DECIMAL_PLACES: 3, // Internal precision (betConfig.decimalPlaces is for display)
     INITIAL_STEP: -1,
     PLATFORM_NAME: 'In-out',

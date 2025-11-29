@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { Difficulty } from '../../routes/gamePlay/DTO/bet-payload.dto';
 import { GameConfigService } from '../gameConfig/game-config.service';
+import { LeaderElectionService } from '../redis/leader-election.service';
+import { PubSubService } from '../redis/pub-sub.service';
 import { RedisService } from '../redis/redis.service';
 import { HazardGeneratorService } from './hazard-generator.service';
 import { HazardState } from './interfaces/hazard-state.interface';
@@ -13,18 +15,23 @@ import { DEFAULTS } from '../../config/defaults.config';
 
 /**
  * Manages global hazard column rotation across all difficulties
- * Runs periodic scheduler that generates new patterns and broadcasts to Redis
+ * Uses leader election to ensure only one server rotates hazards
  * Implements current/next pattern system with configurable rotation intervals
+ * Uses pub/sub for cache invalidation across multiple servers
  */
 @Injectable()
 export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(HazardSchedulerService.name);
 
-  // Timers for each difficulty level
+  // Timers for each difficulty level (only active on leader)
   private timers: Record<string, NodeJS.Timeout> = {};
 
   // In-memory cache of current states
   private states: Record<string, HazardState> = {};
+
+  // Leader election service instance (created per scheduler)
+  private leaderElection: LeaderElectionService;
+  private isLeader: boolean = false;
 
   // Hardcoded default configuration (used if DB config not available)
   private readonly DEFAULT_CONFIG = {
@@ -41,26 +48,64 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
   // Active configuration (loaded from DB or defaults)
   private totalColumns: number = this.DEFAULT_CONFIG.totalColumns;
   private defaultRefreshMs: number = this.DEFAULT_CONFIG.hazardRefreshMs;
+  
   constructor(
     private readonly redisService: RedisService,
     private readonly gameConfigService: GameConfigService,
     private readonly hazardGenerator: HazardGeneratorService,
-  ) {}
+    private readonly pubSubService: PubSubService,
+  ) {
+    // Create leader election instance for hazard scheduler with specific service name
+    // This allows multiple services to use leader election independently
+    this.leaderElection = new LeaderElectionService(
+      this.redisService,
+      'hazard-scheduler',
+    );
+  }
 
   /**
    * Bootstrap hazard system on application startup
+   * Attempts to become leader, only leader starts rotation timers
+   * All servers listen for rotation notifications
    */
   async onModuleInit() {
     await this.loadConfiguration();
-    await this.startAllDifficulties();
-    this.logger.log('✅ Hazard scheduler started');
+    
+    // Try to become leader
+    const becameLeader = await this.leaderElection.tryBecomeLeader();
+    this.isLeader = becameLeader;
+
+    if (becameLeader) {
+      this.logger.log(
+        `✅ Hazard scheduler started as LEADER: serverId=${this.leaderElection.getServerId()}`,
+      );
+      await this.startAllDifficulties();
+    } else {
+      const currentLeader = await this.leaderElection.getCurrentLeader();
+      this.logger.log(
+        `✅ Hazard scheduler started as FOLLOWER: serverId=${this.leaderElection.getServerId()} currentLeader=${currentLeader}`,
+      );
+      // Follower: Load initial state from Redis but don't start timers
+      await this.loadInitialStatesFromRedis();
+    }
+
+    // All servers (leader and followers) listen for rotation notifications
+    await this.setupRotationListener();
+    
+    this.logger.log(
+      `Hazard scheduler initialization complete: isLeader=${this.isLeader} serverId=${this.leaderElection.getServerId()}`,
+    );
   }
 
   /**
    * Cleanup on shutdown
    */
   onModuleDestroy() {
+    this.logger.log(
+      `Shutting down hazard scheduler: isLeader=${this.isLeader} serverId=${this.leaderElection.getServerId()}`,
+    );
     this.stopAll();
+    // Leader election service handles its own cleanup
   }
 
   /**
@@ -88,7 +133,7 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
         }
       }
     } catch (error) {
-      // Silently use defaults
+      this.logger.error(`Error loading hazard configuration: ${error.message}`, error.stack);
     }
   }
 
@@ -102,8 +147,8 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
       if (typeof count === 'number' && count > 0) {
         return count;
       }
-    } catch {
-      // Fall through to default
+    } catch (error) {
+      this.logger.error(`Error getting hazard count for difficulty: ${difficulty}`, error.stack);
     }
     return DEFAULTS.hazardConfig.hazards[difficulty];
   }
@@ -171,73 +216,118 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Schedule next rotation for a difficulty
+   * Only schedules if this server is the leader
    */
   private scheduleRotation(difficulty: Difficulty) {
-    // Clear existing timer if any
-    if (this.timers[difficulty]) {
-      clearTimeout(this.timers[difficulty]);
-    }
-
-    // Schedule rotation
-    this.timers[difficulty] = setTimeout(() => {
-      this.rotateDifficulty(difficulty).catch((error) => {
-        this.logger.error(
-          `Error rotating ${difficulty}: ${error.message}`,
-          error.stack,
+    // Check if we're still the leader before scheduling
+    this.leaderElection.isLeader().then((isLeader) => {
+      if (!isLeader) {
+        this.logger.debug(
+          `${difficulty}: Not leader, skipping rotation schedule. serverId=${this.leaderElection.getServerId()}`,
         );
-      });
-    }, this.defaultRefreshMs);
+        this.isLeader = false;
+        return;
+      }
+
+      this.isLeader = true;
+
+      // Clear existing timer if any
+      if (this.timers[difficulty]) {
+        clearTimeout(this.timers[difficulty]);
+      }
+
+      // Schedule rotation
+      this.timers[difficulty] = setTimeout(() => {
+        this.rotateDifficulty(difficulty).catch((error) => {
+          this.logger.error(
+            `Error rotating ${difficulty}: ${error.message}`,
+            error.stack,
+          );
+        });
+      }, this.defaultRefreshMs);
+
+      this.logger.debug(
+        `${difficulty}: Rotation scheduled in ${this.defaultRefreshMs}ms (leader=${this.isLeader})`,
+      );
+    });
   }
 
   /**
    * Perform rotation for a difficulty level
    * Moves 'next' to 'current' and generates new 'next'
+   * Only executes if this server is the leader
    */
   private async rotateDifficulty(difficulty: Difficulty) {
-    const hazardCount = await this.getHazardCount(difficulty);
-    const now = Date.now();
-    const changeAt = now + this.defaultRefreshMs;
+    // Double-check we're still the leader before rotating
+    const isLeader = await this.leaderElection.isLeader();
+    if (!isLeader) {
+      this.logger.debug(
+        `${difficulty}: No longer leader, skipping rotation. serverId=${this.leaderElection.getServerId()}`,
+      );
+      this.isLeader = false;
+      return;
+    }
 
-    // Get previous state
-    const prevState = this.states[difficulty];
+    this.isLeader = true;
 
-    // Move 'next' to 'current', generate new 'next'
-    const current =
-      prevState?.next ||
-      this.hazardGenerator.generateRandomPattern(
+    try {
+      const hazardCount = await this.getHazardCount(difficulty);
+      const now = Date.now();
+      const changeAt = now + this.defaultRefreshMs;
+
+      // Get previous state from Redis (not local cache) to ensure consistency
+      const prevStateRedis = await this.redisService.get<HazardState>(
+        this.redisKey(difficulty),
+      );
+      const prevState = prevStateRedis || this.states[difficulty];
+
+      // Move 'next' to 'current', generate new 'next'
+      const current =
+        prevState?.next ||
+        this.hazardGenerator.generateRandomPattern(
+          hazardCount,
+          this.totalColumns,
+        );
+      const next = this.hazardGenerator.generateRandomPattern(
         hazardCount,
         this.totalColumns,
       );
-    const next = this.hazardGenerator.generateRandomPattern(
-      hazardCount,
-      this.totalColumns,
-    );
 
-    const state: HazardState = {
-      difficulty,
-      current,
-      next,
-      changeAt,
-      hazardCount,
-      generatedAt: new Date(now).toISOString(),
-    };
+      const state: HazardState = {
+        difficulty,
+        current,
+        next,
+        changeAt,
+        hazardCount,
+        generatedAt: new Date(now).toISOString(),
+      };
 
-    // Update memory
-    this.states[difficulty] = state;
+      // Update memory
+      this.states[difficulty] = state;
 
-    // Update Redis
-    const ttlSeconds = Math.ceil((this.defaultRefreshMs * 1.5) / 1000);
-    await this.redisService.set(this.redisKey(difficulty), state, ttlSeconds);
+      // Update Redis (single source of truth)
+      const ttlSeconds = Math.ceil((this.defaultRefreshMs * DEFAULTS.GAME.HAZARD_TTL_MULTIPLIER) / 1000);
+      await this.redisService.set(this.redisKey(difficulty), state, ttlSeconds);
 
-    // Add to history
-    await this.addToHistory(difficulty, state);
+      // Notify other servers via pub/sub
+      await this.notifyRotation(difficulty, state);
 
-    // Schedule next rotation
-    this.scheduleRotation(difficulty);
+      // Add to history
+      await this.addToHistory(difficulty, state);
 
-    this.logger.log(
-      `${difficulty}: [${current.join(',')}] @ ${new Date(now).toISOString()}`,
-    );
+      // Schedule next rotation
+      this.scheduleRotation(difficulty);
+
+      this.logger.log(
+        `${difficulty}: Rotated [${current.join(',')}] → next [${next.join(',')}] @ ${new Date(now).toISOString()} serverId=${this.leaderElection.getServerId()}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to rotate ${difficulty}: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
   }
 
   /**
@@ -249,8 +339,14 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
       const client = this.redisService.getClient();
       await client.lpush(historyKey, JSON.stringify(state));
       await client.ltrim(historyKey, 0, DEFAULTS.GAME.HAZARD_HISTORY_LIMIT - 1);
+      this.logger.debug(
+        `${difficulty}: State added to history: current=[${state.current.join(',')}]`,
+      );
     } catch (error) {
-      // Silently fail
+      // History is optional, log but don't fail rotation
+      this.logger.warn(
+        `Failed to add ${difficulty} state to history: ${error.message}`,
+      );
     }
   }
 
@@ -275,6 +371,7 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Get current state for a difficulty (with auto-recovery)
+   * Followers read from Redis, only leader can trigger rotation
    */
   async getCurrentState(
     difficulty: Difficulty,
@@ -282,27 +379,69 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
     // Try memory first
     let state = this.states[difficulty];
 
-    // If not in memory, try Redis
-    if (!state) {
+    // If not in memory or expired, try Redis
+    const now = Date.now();
+    if (!state || (state.changeAt && now >= state.changeAt)) {
       const redisState = await this.redisService.get<HazardState>(
         this.redisKey(difficulty),
       );
       if (redisState) {
         state = redisState;
         this.states[difficulty] = state;
+        this.logger.debug(
+          `${difficulty}: State refreshed from Redis: current=[${state.current.join(',')}] next=[${state.next.join(',')}]`,
+        );
       }
     }
 
-    // If state expired (changeAt passed), trigger early rotation
-    if (state && Date.now() >= state.changeAt) {
-      await this.rotateDifficulty(difficulty);
-      state = this.states[difficulty];
+    // If state expired and we're the leader, trigger rotation
+    // Followers wait for leader to rotate and notify
+    if (state && now >= state.changeAt) {
+      const isLeader = await this.leaderElection.isLeader();
+      if (isLeader) {
+        this.logger.debug(
+          `${difficulty}: State expired, leader triggering rotation`,
+        );
+        await this.rotateDifficulty(difficulty);
+        state = this.states[difficulty];
+      } else {
+        this.logger.debug(
+          `${difficulty}: State expired, but not leader. Waiting for leader rotation.`,
+        );
+        // Try to refresh from Redis one more time (leader might have rotated)
+        const freshState = await this.redisService.get<HazardState>(
+          this.redisKey(difficulty),
+        );
+        if (freshState && freshState.changeAt > state.changeAt) {
+          state = freshState;
+          this.states[difficulty] = state;
+        }
+      }
     }
 
-    // If still no state, reinitialize
+    // If still no state, only leader can initialize
     if (!state) {
-      await this.initializeDifficulty(difficulty);
-      state = this.states[difficulty];
+      const isLeader = await this.leaderElection.isLeader();
+      if (isLeader) {
+        this.logger.warn(
+          `${difficulty}: No state found, leader initializing`,
+        );
+        await this.initializeDifficulty(difficulty);
+        state = this.states[difficulty];
+      } else {
+        // Follower: try to get from Redis one more time
+        const redisState = await this.redisService.get<HazardState>(
+          this.redisKey(difficulty),
+        );
+        if (redisState) {
+          state = redisState;
+          this.states[difficulty] = state;
+        } else {
+          this.logger.warn(
+            `${difficulty}: No state found and not leader. Waiting for leader to initialize.`,
+          );
+        }
+      }
     }
 
     return state;
@@ -341,10 +480,127 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Force immediate rotation for a difficulty (for testing/admin)
+   * Only works if this server is the leader
    */
   async forceRotate(difficulty: Difficulty): Promise<HazardState> {
+    const isLeader = await this.leaderElection.isLeader();
+    if (!isLeader) {
+      throw new Error(
+        `Cannot force rotate: not leader. Current leader: ${await this.leaderElection.getCurrentLeader()}`,
+      );
+    }
     await this.rotateDifficulty(difficulty);
     return this.states[difficulty];
+  }
+
+  /**
+   * Setup pub/sub listener for rotation notifications
+   * All servers (leader and followers) listen for cache invalidation
+   */
+  private async setupRotationListener(): Promise<void> {
+    try {
+      for (const difficulty of Object.values(Difficulty)) {
+        const channel = `hazard-rotation-${difficulty}`;
+        
+        await this.pubSubService.subscribe(channel, (message: string) => {
+          try {
+            const notification = JSON.parse(message);
+            this.logger.debug(
+              `Received rotation notification: difficulty=${difficulty} timestamp=${notification.timestamp} serverId=${this.leaderElection.getServerId()}`,
+            );
+
+            // Clear local cache to force refresh from Redis
+            delete this.states[difficulty];
+            this.logger.debug(
+              `${difficulty}: Local cache invalidated, will refresh from Redis on next read`,
+            );
+          } catch (error) {
+            this.logger.error(
+              `Error processing rotation notification for ${difficulty}: ${error.message}`,
+              error.stack,
+            );
+          }
+        });
+
+        this.logger.debug(
+          `Subscribed to rotation notifications: channel=${channel}`,
+        );
+      }
+
+      this.logger.log(
+        `Rotation notification listeners setup complete: serverId=${this.leaderElection.getServerId()}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to setup rotation listeners: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Notify other servers about rotation via pub/sub
+   * Called by leader after successful rotation
+   */
+  private async notifyRotation(
+    difficulty: Difficulty,
+    state: HazardState,
+  ): Promise<void> {
+    try {
+      const channel = `hazard-rotation-${difficulty}`;
+      const notification = {
+        difficulty,
+        timestamp: Date.now(),
+        changeAt: state.changeAt,
+        current: state.current,
+        next: state.next,
+        serverId: this.leaderElection.getServerId(),
+      };
+
+      const subscribers = await this.pubSubService.publish(channel, notification);
+      this.logger.debug(
+        `Published rotation notification: channel=${channel} subscribers=${subscribers} serverId=${this.leaderElection.getServerId()}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to publish rotation notification for ${difficulty}: ${error.message}`,
+        error.stack,
+      );
+      // Don't throw - rotation succeeded, notification is best-effort
+    }
+  }
+
+  /**
+   * Load initial states from Redis (for followers)
+   * Leader initializes fresh, followers load existing state
+   */
+  private async loadInitialStatesFromRedis(): Promise<void> {
+    try {
+      for (const difficulty of Object.values(Difficulty)) {
+        const state = await this.redisService.get<HazardState>(
+          this.redisKey(difficulty),
+        );
+        if (state) {
+          this.states[difficulty] = state;
+          this.logger.debug(
+            `${difficulty}: Loaded initial state from Redis: current=[${state.current.join(',')}] next=[${state.next.join(',')}]`,
+          );
+        } else {
+          this.logger.warn(
+            `${difficulty}: No state found in Redis, waiting for leader to initialize`,
+          );
+        }
+      }
+      this.logger.log(
+        `Initial states loaded from Redis: serverId=${this.leaderElection.getServerId()}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to load initial states from Redis: ${error.message}`,
+        error.stack,
+      );
+    }
   }
 
   /**

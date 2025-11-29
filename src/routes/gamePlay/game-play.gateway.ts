@@ -464,7 +464,7 @@ export class GamePlayGateway
 
     server.on('connection', (sock: Socket) => {
       const ackHandler = (data: any, ack?: Function, ...rest: any[]) => {
-        this.logger.log(`ACK handler called with data: ${JSON.stringify(data)} and ack function: ${ack}`);
+        this.logger.log(`ACK handler called with data: ${data}`);
         this.logger.log(`REST args: ${JSON.stringify(rest)}`);
         if (typeof ack !== 'function') return;
 
