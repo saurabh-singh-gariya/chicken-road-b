@@ -679,6 +679,10 @@ export class GamePlayService {
       gameSession.currentStep,
     );
 
+    if(!gameSession.isActive){
+      return null;
+    }
+
     let endReason: 'win' | 'cashout' | 'hazard' | undefined;
     if (!gameSession.isActive) {
       if (gameSession.isWin) {
