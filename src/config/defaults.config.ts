@@ -146,8 +146,8 @@ export const DEFAULTS = {
   REDIS: {
     DEFAULT_TTL: 3600,
     CONFIG_KEY: 'redis.TTL',
-    SESSION_TTL_MS: 3600000, // 1 hour in milliseconds
-    SESSION_TTL_CONFIG_KEY: 'game.session.ttl.ms',
+    SESSION_TTL: 3600, // 1 hour in seconds
+    SESSION_TTL_CONFIG_KEY: 'game.session.ttl',
   },
 
   // JWT Configuration

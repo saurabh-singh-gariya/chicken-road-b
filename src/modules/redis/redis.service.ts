@@ -99,18 +99,14 @@ export class RedisService {
       );
       const parsed = Number(ttlValue);
       if (isFinite(parsed) && parsed > 0) {
-        // Convert milliseconds to seconds for Redis EX command
-        const ttlSeconds = Math.ceil(parsed / 1000);
-        this.logger.debug(`Using configured session TTL: ${parsed}ms (${ttlSeconds}s)`);
-        return ttlSeconds;
+        this.logger.debug(`Using configured session TTL: ${parsed}s`);
+        return parsed;
       }
     } catch (error) {
       this.logger.debug('Session TTL not configured, using default');
     }
 
-    // Convert default milliseconds to seconds
-    const defaultSeconds = Math.ceil(DEFAULTS.REDIS.SESSION_TTL_MS / 1000);
-    return defaultSeconds;
+    return DEFAULTS.REDIS.SESSION_TTL;
   }
 
   /**

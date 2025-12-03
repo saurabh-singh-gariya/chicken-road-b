@@ -8,11 +8,12 @@ import { AllExceptionsFilter } from './common/filters/all-exception.filter';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
 import { WinstonLoggerService } from './common/logger/winston-logger.service';
 import { DEFAULTS } from './config/defaults.config';
+import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
   const winstonLogger = new WinstonLoggerService();
 
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: winstonLogger,
   });
 
@@ -62,6 +63,7 @@ async function bootstrap() {
       transform: true,
     }),
   );
+  app.set('trust proxy', true);
 
   const configService = app.get(ConfigService);
   const port = configService.get<number>('app.port') || DEFAULTS.APP.PORT;

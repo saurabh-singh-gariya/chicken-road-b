@@ -71,18 +71,7 @@ export class GameConfigService {
   }
 
   async getJwtExpiresGeneric(): Promise<string> {
-    try {
-      const expiresConfig = await this.getConfig('jwt.expires.generic');
-      if (typeof expiresConfig === 'string') {
-        return expiresConfig;
-      }
-      if (expiresConfig && typeof expiresConfig === 'object' && expiresConfig.expiresIn) {
-        return expiresConfig.expiresIn;
-      }
-    } catch (e) {
-      this.logger.debug('Using user token expiry for generic tokens (DB entry missing)');
-      return await this.getJwtExpires();
-    }
+    // Use same expiry as regular JWT tokens - no separate config needed
     return await this.getJwtExpires();
   }
 
