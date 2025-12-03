@@ -200,8 +200,9 @@ export class SingleWalletFunctionsService {
 
     const messageObj = { action: 'bet', txns: [txn] };
     const payload = { key: cert, message: JSON.stringify(messageObj) };
+    const requestStartTime = Date.now();
     this.logger.debug(
-      `Calling placeBet url=${url} agent=${agentId} round=${roundId}`,
+      `[WALLET_API_REQUEST] user=${userId} agent=${agentId} action=placeBet url=${url} amount=${amount} roundId=${roundId} txId=${platformTxId}`,
     );
     try {
       const resp = await this.retryWithBackoff(
@@ -210,7 +211,11 @@ export class SingleWalletFunctionsService {
         1000,
         `placeBet agent=${agentId} user=${userId}`,
       );
+      const responseTime = Date.now() - requestStartTime;
       const mappedResponse = this.mapAgentResponse(resp.data);
+      this.logger.log(
+        `[WALLET_API_RESPONSE] user=${userId} agent=${agentId} action=placeBet status=${mappedResponse.status} balance=${mappedResponse.balance} responseTime=${responseTime}ms`,
+      );
       
       // Check if agent rejected the bet
       if (mappedResponse.status !== '0000') {
@@ -321,8 +326,9 @@ export class SingleWalletFunctionsService {
     }
     const messageObj = { action: 'settle', txns: [txn] };
     const payload = { key: cert, message: JSON.stringify(messageObj) };
+    const requestStartTime = Date.now();
     this.logger.debug(
-      `Calling settleBet url=${url} agent=${agentId} txId=${platformTxId}`,
+      `[WALLET_API_REQUEST] user=${userId} agent=${agentId} action=settleBet url=${url} txId=${platformTxId} betAmount=${betAmount} winAmount=${winAmount} roundId=${roundId}`,
     );
     try {
       const resp = await this.retryWithBackoff(
@@ -331,7 +337,11 @@ export class SingleWalletFunctionsService {
         1000,
         `settleBet agent=${agentId} txId=${platformTxId}`,
       );
+      const responseTime = Date.now() - requestStartTime;
       const mappedResponse = this.mapAgentResponse(resp.data);
+      this.logger.log(
+        `[WALLET_API_RESPONSE] user=${userId} agent=${agentId} action=settleBet status=${mappedResponse.status} balance=${mappedResponse.balance} responseTime=${responseTime}ms`,
+      );
       
       // Check if agent rejected the settlement
       if (mappedResponse.status !== '0000') {
@@ -355,11 +365,8 @@ export class SingleWalletFunctionsService {
       
       return mappedResponse;
     } catch (err: any) {
-      this.logger.error(
-        `settleBet failed agent=${agentId} txId=${platformTxId}`,
-        err,
-      );
-
+      const responseTime = Date.now() - requestStartTime;
+      
       // Determine error type
       let errorType = WalletErrorType.UNKNOWN_ERROR;
       let httpStatus: number | undefined;
@@ -374,6 +381,18 @@ export class SingleWalletFunctionsService {
       } else if (err.code === 'ETIMEDOUT' || err.name === 'TimeoutError') {
         errorType = WalletErrorType.TIMEOUT_ERROR;
       }
+
+      const errorTypeStr = err.response?.status >= 400 && err.response?.status < 500 
+        ? 'CLIENT_ERROR' 
+        : err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND'
+        ? 'NETWORK_ERROR'
+        : err.code === 'ETIMEDOUT' || err.name === 'TimeoutError'
+        ? 'TIMEOUT_ERROR'
+        : 'UNKNOWN_ERROR';
+      this.logger.error(
+        `[WALLET_API_ERROR] user=${userId} agent=${agentId} action=settleBet txId=${platformTxId} errorType=${errorTypeStr} httpStatus=${httpStatus || 'N/A'} responseTime=${responseTime}ms error=${err.message}`,
+        err.stack,
+      );
 
       // Log error to database
       try {
@@ -468,8 +487,10 @@ export class SingleWalletFunctionsService {
 
     const messageObj = { action: 'cancelBet', txns };
     const payload = { key: cert, message: JSON.stringify(messageObj) };
+    const requestStartTime = Date.now();
+    const txIds = txns.map(t => t.platformTxId).join(',');
     this.logger.debug(
-      `Calling refundBet url=${url} agent=${agentId} txns=${txns.length}`,
+      `[WALLET_API_REQUEST] user=${userId} agent=${agentId} action=refundBet url=${url} txCount=${txns.length} txIds=[${txIds}]`,
     );
     try {
       const resp = await this.retryWithBackoff(
@@ -478,7 +499,11 @@ export class SingleWalletFunctionsService {
         1000,
         `refundBet agent=${agentId} user=${userId}`,
       );
+      const responseTime = Date.now() - requestStartTime;
       const mappedResponse = this.mapAgentResponse(resp.data);
+      this.logger.log(
+        `[WALLET_API_RESPONSE] user=${userId} agent=${agentId} action=refundBet status=${mappedResponse.status} balance=${mappedResponse.balance} txCount=${txns.length} responseTime=${responseTime}ms`,
+      );
       
       // Check if agent rejected the refund
       if (mappedResponse.status !== '0000') {

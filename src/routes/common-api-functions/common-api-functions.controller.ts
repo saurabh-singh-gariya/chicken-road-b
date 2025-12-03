@@ -26,7 +26,10 @@ export class CommonApiFunctionsController {
     @Req() req: Request,
   ): Promise<{ status: string; url?: string; extension: any[] }> {
     const agent = (req as any).agent;
-    return this.service.loginMember(agent, body.userId, body.agentId);
+    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || 
+                      (req.headers['x-real-ip'] as string) || 
+                      req.socket.remoteAddress;
+    return this.service.loginMember(agent, body.userId, body.agentId, ipAddress);
   }
 
   @Post('doLoginAndLaunchGame')

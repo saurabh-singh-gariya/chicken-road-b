@@ -119,6 +119,7 @@ export class CommonApiFunctionsService {
     agent: Agents,
     userId: string,
     agentId: string,
+    ipAddress?: string,
   ): Promise<{
     status: string;
     url?: string;
@@ -126,7 +127,7 @@ export class CommonApiFunctionsService {
     desc?: string;
   }> {
     this.logger.log(
-      `[loginMember] Request received - userId: ${userId}, agentId: ${agentId}`,
+      `[LOGIN_REQUEST] user=${userId} agent=${agentId} ip=${ipAddress || 'N/A'}`,
     );
 
     if (agent.agentId !== agentId) {
@@ -183,7 +184,7 @@ export class CommonApiFunctionsService {
     await this.userSessionService.addSession(userId, agentId);
 
     this.logger.log(
-      `[loginMember] SUCCESS - Login URL generated for userId: ${userId}, agentId: ${agentId}`,
+      `[LOGIN_SUCCESS] user=${userId} agent=${agentId} ip=${ipAddress || 'N/A'} tokenGenerated=true currency=${currency} gameMode=${gameMode}`,
     );
     return { status: ERROR_CODES.SUCCESS, url, extension: [] };
   }

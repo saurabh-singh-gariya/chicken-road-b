@@ -29,7 +29,7 @@ export class GameApiRoutesService {
       );
     } catch (error) {
       this.logger.warn(
-        `[authenticateGame] Token verification failed - operator: ${dto.operator}, error: ${error.message}`,
+        `[TOKEN_VERIFICATION_FAILED] operator=${dto.operator} reason=${error.message}`,
       );
       throw new UnauthorizedException('Invalid auth token');
     }
@@ -58,12 +58,12 @@ export class GameApiRoutesService {
       86400, // 24 hours in seconds
     );
 
-    this.logger.log(
-      `[authenticateGame] SUCCESS - New token generated for userId: ${userId}, agentId: ${agentId}, operator: ${dto.operator}`,
-    );
-
     // Add user to logged-in sessions
     await this.userSessionService.addSession(userId, agentId);
+
+    this.logger.log(
+      `[TOKEN_VERIFIED] user=${userId} agent=${agentId} operator=${dto.operator} currency=${dto.currency} gameMode=${dto.game_mode} tokenGenerated=true`,
+    );
 
     // Return response with dummy data as requested
     return {

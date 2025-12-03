@@ -40,7 +40,7 @@ export class WinstonLoggerService implements LoggerService {
       const fileTransport = new (DailyRotateFile as any)({
         filename: path.join(logDir, 'app-%DATE%.log'),
         datePattern: 'YYYY-MM-DD-HH',
-        maxFiles: '2d',
+        maxFiles: '60d', // Keep log files for 2 months, then delete
         maxSize: '50m',
         format: winston.format.combine(
           winston.format((info: any) => {
@@ -60,7 +60,7 @@ export class WinstonLoggerService implements LoggerService {
         filename: path.join(logDir, 'error-%DATE%.log'),
         datePattern: 'YYYY-MM-DD-HH',
         level: 'error',
-        maxFiles: '2d',
+        maxFiles: '60d', // Keep log files for 2 months, then delete
         maxSize: '50m',
         format: logFormat,
         zippedArchive: false,

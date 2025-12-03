@@ -155,7 +155,7 @@ export class GamePlayService {
     const platformTxId = `${uuidv4()}`;
 
     this.logger.log(
-      `Bet flow initiated: user=${userId} agent=${agentId} amount=${betAmountStr} difficulty=${difficultyUC} currency=${currencyUC} roundId=${roundId} txId=${platformTxId}`,
+      `[BET_PLACED] user=${userId} agent=${agentId} amount=${betAmountStr} currency=${currencyUC} difficulty=${difficultyUC} roundId=${roundId} txId=${platformTxId}`,
     );
 
     const gamePayloads = await this.gameConfigService.getChickenRoadGamePayloads();
@@ -173,9 +173,7 @@ export class GamePlayService {
       gamePayloads,
     );
 
-    this.logger.log(
-      `Wallet API response: user=${userId} status=${agentResult.status} balance=${agentResult.balance} balanceTs=${agentResult.balanceTs || 'N/A'}`,
-    );
+    // Wallet API response already logged in single-wallet-functions.service
 
     if (agentResult.status !== '0000') {
       this.logger.error(
@@ -271,9 +269,7 @@ export class GamePlayService {
       lineNumber: GAME_CONSTANTS.INITIAL_STEP,
     };
 
-    this.logger.log(
-      `Bet placed user=${userId} agent=${agentId} amount=${betAmountStr} difficulty=${difficultyUC} currency=${currencyUC}`,
-    );
+    // Bet placement already logged above
 
     return resp;
     } finally {
@@ -344,7 +340,7 @@ export class GamePlayService {
       gameSession.isWin = true;
       endReason = 'win';
       this.logger.log(
-        `Final step reached - AUTO WIN: user=${userId} step=${lineNumber} betAmount=${gameSession.betAmount} winAmount=${gameSession.winAmount} multiplier=${gameSession.coefficients[gameSession.currentStep]}`,
+        `[GAME_STEP] user=${userId} agent=${agentId} step=${lineNumber} multiplier=${gameSession.coefficients[gameSession.currentStep]} winAmount=${gameSession.winAmount} hitHazard=false endReason=win`,
       );
     } else {
       // Get active hazard columns from scheduler
@@ -364,7 +360,7 @@ export class GamePlayService {
           gameSession.betAmount *
           Number(gameSession.coefficients[gameSession.currentStep]);
         this.logger.log(
-          `✅ Safe: user=${userId} step=${gameSession.currentStep} win=${gameSession.winAmount}`,
+          `[GAME_STEP] user=${userId} agent=${agentId} step=${gameSession.currentStep} multiplier=${gameSession.coefficients[gameSession.currentStep]} winAmount=${gameSession.winAmount} hitHazard=false`,
         );
       } else {
         gameSession.isActive = false;
@@ -374,7 +370,7 @@ export class GamePlayService {
         gameSession.currentStep = lineNumber;
         endReason = 'hazard';
         this.logger.log(
-          `💥 Hazard hit: user=${userId} line=${lineNumber} hazards=[${hazardColumns.join(',')}]`,
+          `[GAME_STEP] user=${userId} agent=${agentId} step=${lineNumber} multiplier=0 winAmount=0 hitHazard=true endReason=hazard`,
         );
       }
     }
@@ -403,13 +399,7 @@ export class GamePlayService {
       settlementAmount = gameSession.winAmount;
     }
     if (endReason === 'win' || endReason === 'hazard') {
-      this.logger.log(
-        `Game ended - initiating settlement: user=${userId} endReason=${endReason} betAmount=${gameSession.betAmount} winAmount=${gameSession.winAmount} settlementAmount=${settlementAmount} txId=${gameSession.platformBetTxId}`,
-      );
       try {
-        this.logger.debug(
-          `Calling wallet API settleBet: user=${userId} agent=${agentId} txId=${gameSession.platformBetTxId} settlementAmount=${settlementAmount}`,
-        );
         const settleResult = await this.singleWalletFunctionsService.settleBet(
           gameSession.agentId,
           gameSession.platformBetTxId,
@@ -546,15 +536,13 @@ export class GamePlayService {
     const settlementAmount = gameSession.winAmount;
 
     this.logger.log(
-      `Cashout initiated: user=${userId} step=${gameSession.currentStep} betAmount=${gameSession.betAmount} winAmount=${settlementAmount} multiplier=${currentMultiplier} txId=${gameSession.platformBetTxId}`,
+      `[CASHOUT] user=${userId} agent=${agentId} step=${gameSession.currentStep} multiplier=${currentMultiplier} winAmount=${settlementAmount} txId=${gameSession.platformBetTxId}`,
     );
 
     const gamePayloads = await this.gameConfigService.getChickenRoadGamePayloads();
 
     try {
-      this.logger.debug(
-        `Calling wallet API settleBet for cashout: user=${userId} agent=${gameSession.agentId} txId=${gameSession.platformBetTxId} settlementAmount=${settlementAmount}`,
-      );
+        // Wallet API call logging handled in single-wallet-functions.service
       const settleResult = await this.singleWalletFunctionsService.settleBet(
         gameSession.agentId,
         gameSession.platformBetTxId,

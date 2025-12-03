@@ -145,7 +145,7 @@ export class GamePlayGateway
       authPayload = await this.jwtTokens.verifyToken(rawToken);
     } catch (e) {
       this.logger.warn(
-        `Token verification failed for ${client.id}: ${(e as any)?.message || e}`,
+        `[WS_CONNECT_FAILED] socketId=${client.id} reason=INVALID_TOKEN error=${(e as any)?.message || e}`,
       );
       this.emitAndDisconnect(
         client,
@@ -164,6 +164,11 @@ export class GamePlayGateway
 
     (client.data ||= {}).userId = userId;
     (client.data ||= {}).agentId = agentId;
+
+    const ipAddress = client.handshake.address || client.request.socket.remoteAddress;
+    this.logger.log(
+      `[WS_CONNECT] socketId=${client.id} user=${userId} agent=${agentId} gameMode=${gameMode} operatorId=${operatorId} ip=${ipAddress}`,
+    );
 
     const balance: BalanceEventPayload = {
       currency: DEFAULTS.CURRENCY.DEFAULT,
@@ -218,6 +223,12 @@ export class GamePlayGateway
   }
 
   async handleDisconnect(client: Socket) {
+    const userId = client.data?.userId;
+    const agentId = client.data?.agentId;
+    const reason = client.disconnect ? 'disconnect' : 'timeout';
+    this.logger.log(
+      `[WS_DISCONNECT] socketId=${client.id} user=${userId || 'N/A'} agent=${agentId || 'N/A'} reason=${reason}`,
+    );
     const userId = client.data?.userId;
     const agentId = client.data?.agentId;
 
