@@ -14,6 +14,7 @@ import { Bet } from './entities/bet.entity';
 
 import { AgentsModule } from './modules/agents/agents.module';
 import { BetModule } from './modules/bet/bet.module';
+import { BetCleanupSchedulerModule } from './modules/bet-cleanup/bet-cleanup-scheduler.module';
 import { HazardModule } from './modules/hazard/hazard.module';
 import { WalletErrorModule } from './modules/wallet-error/wallet-error.module';
 import { CommonApiFunctionsModule } from './routes/common-api-functions/common-api-functions.module';
@@ -64,6 +65,7 @@ import {HealthController} from './routes/extra/health.controller';
     AgentsModule,
     HazardModule,
     BetModule,
+    BetCleanupSchedulerModule,
     WalletErrorModule,
     CommonApiFunctionsModule,
     GameApiRoutesModule,

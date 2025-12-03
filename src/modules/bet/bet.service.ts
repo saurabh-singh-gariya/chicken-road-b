@@ -241,4 +241,24 @@ export class BetService {
       )
       .getMany();
   }
+
+  /**
+   * Delete all bets older than the specified date
+   * @param beforeDate - Delete bets created before this date
+   * @returns Number of bets deleted
+   */
+  async deleteBetsBeforeDate(beforeDate: Date): Promise<number> {
+    const result = await this.repo
+      .createQueryBuilder()
+      .delete()
+      .from(Bet)
+      .where('createdAt < :beforeDate', { beforeDate })
+      .execute();
+    
+    const count = result.affected || 0;
+    this.logger.log(
+      `Deleted ${count} bet(s) created before ${beforeDate.toISOString()}`,
+    );
+     return count;
+  }
 }

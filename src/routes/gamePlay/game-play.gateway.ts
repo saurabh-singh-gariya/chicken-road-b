@@ -225,15 +225,10 @@ export class GamePlayGateway
   async handleDisconnect(client: Socket) {
     const userId = client.data?.userId;
     const agentId = client.data?.agentId;
-    const reason = client.disconnect ? 'disconnect' : 'timeout';
+    // In disconnect handler, socket is already disconnected, so we use 'disconnect' as default reason
+    const reason = 'disconnect';
     this.logger.log(
       `[WS_DISCONNECT] socketId=${client.id} user=${userId || 'N/A'} agent=${agentId || 'N/A'} reason=${reason}`,
-    );
-    const userId = client.data?.userId;
-    const agentId = client.data?.agentId;
-
-    this.logger.log(
-      `GamePlay socket disconnected id=${client.id} userId=${userId || 'unknown'} agentId=${agentId || 'unknown'}`,
     );
 
     // TEMPORARY: Clean up Redis and placed bets on disconnect
