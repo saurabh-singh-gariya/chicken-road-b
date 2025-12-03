@@ -112,4 +112,34 @@ export class RedisService {
     const defaultSeconds = Math.ceil(DEFAULTS.REDIS.SESSION_TTL_MS / 1000);
     return defaultSeconds;
   }
+
+  /**
+   * Acquire a distributed lock using Redis SETNX
+   * @param key - Lock key
+   * @param ttlSeconds - Lock expiration time in seconds (default: 10)
+   * @returns true if lock acquired, false if already locked
+   */
+  async acquireLock(key: string, ttlSeconds: number = 10): Promise<boolean> {
+    try {
+      const result = await this.redisClient.set(key, '1', 'EX', ttlSeconds, 'NX');
+      return result === 'OK';
+    } catch (error) {
+      this.logger.error(`Failed to acquire lock ${key}`, error);
+      // On error, assume lock not acquired to prevent race conditions
+      return false;
+    }
+  }
+
+  /**
+   * Release a distributed lock
+   * @param key - Lock key
+   */
+  async releaseLock(key: string): Promise<void> {
+    try {
+      await this.redisClient.del(key);
+      this.logger.debug(`Released lock: ${key}`);
+    } catch (error) {
+      this.logger.error(`Failed to release lock ${key}`, error);
+    }
+  }
 }

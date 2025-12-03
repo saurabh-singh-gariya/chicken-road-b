@@ -1,80 +1,12 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { Server } from 'socket.io';
-
-interface LastWinData {
-  username: string;
-  avatar: string | null;
-  countryCode: string;
-  winAmount: string;
-  currency: string;
-}
+import { LAST_WIN_DATA, LastWinData } from './last-win.constants';
 
 @Injectable()
 export class LastWinBroadcasterService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LastWinBroadcasterService.name);
   private intervalId: NodeJS.Timeout | null = null;
   private server: Server | null = null;
-  private currentIndex = 0;
-
-  // Hardcoded array of last win data
-  private readonly lastWinData: LastWinData[] = [
-    {
-      username: 'Tan Supposed Meadowlark',
-      avatar: null,
-      countryCode: 'PK',
-      winAmount: '312.00',
-      currency: 'USD',
-    },
-    {
-      username: 'Salmon Delighted Loon',
-      avatar: null,
-      countryCode: 'IN',
-      winAmount: '306.00',
-      currency: 'USD',
-    },
-    {
-      username: 'Swift Golden Falcon',
-      avatar: null,
-      countryCode: 'US',
-      winAmount: '450.50',
-      currency: 'USD',
-    },
-    {
-      username: 'Bold Crimson Tiger',
-      avatar: null,
-      countryCode: 'UK',
-      winAmount: '289.75',
-      currency: 'GBP',
-    },
-    {
-      username: 'Clever Azure Dolphin',
-      avatar: null,
-      countryCode: 'CA',
-      winAmount: '523.25',
-      currency: 'CAD',
-    },
-    {
-      username: 'Noble Silver Wolf',
-      avatar: null,
-      countryCode: 'AU',
-      winAmount: '678.90',
-      currency: 'AUD',
-    },
-    {
-      username: 'Brave Emerald Eagle',
-      avatar: null,
-      countryCode: 'DE',
-      winAmount: '412.30',
-      currency: 'EUR',
-    },
-    {
-      username: 'Wise Amber Bear',
-      avatar: null,
-      countryCode: 'JP',
-      winAmount: '1250.00',
-      currency: 'JPY',
-    },
-  ];
 
   setServer(server: Server) {
     this.server = server;
@@ -103,7 +35,7 @@ export class LastWinBroadcasterService implements OnModuleInit, OnModuleDestroy 
     // Then broadcast every 5 seconds
     this.intervalId = setInterval(() => {
       this.broadcastNext();
-    }, 5000);
+    }, 4000);
   }
 
   stopBroadcasting() {
@@ -120,9 +52,9 @@ export class LastWinBroadcasterService implements OnModuleInit, OnModuleDestroy 
       return;
     }
 
-    // Get next win data (cycle through array)
-    const winData = this.lastWinData[this.currentIndex];
-    this.currentIndex = (this.currentIndex + 1) % this.lastWinData.length;
+    // Pick a random item from the array
+    const randomIndex = Math.floor(Math.random() * LAST_WIN_DATA.length);
+    const winData = LAST_WIN_DATA[randomIndex];
 
     // Broadcast to all connected clients
     this.server.emit('gameService-last-win', winData);
@@ -130,12 +62,6 @@ export class LastWinBroadcasterService implements OnModuleInit, OnModuleDestroy 
     this.logger.debug(
       `Broadcasted last-win: ${winData.username} won ${winData.winAmount} ${winData.currency}`,
     );
-  }
-
-  // Method to add more win data dynamically (optional)
-  addWinData(data: LastWinData) {
-    this.lastWinData.push(data);
-    this.logger.log(`Added new win data for ${data.username}`);
   }
 }
 

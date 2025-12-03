@@ -41,6 +41,54 @@ export class SingleWalletFunctionsService {
     };
   }
 
+  /**
+   * Retry helper for external API calls with exponential backoff
+   * Retries on transient errors (network, timeout, 5xx) but not on business logic errors (4xx)
+   */
+  private async retryWithBackoff<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = 3,
+    baseDelayMs: number = 1000,
+    operationName: string = 'operation',
+  ): Promise<T> {
+    let lastError: any;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error: any) {
+        lastError = error;
+        
+        // Don't retry on business logic errors (4xx) or agent rejections
+        if (error.response?.status >= 400 && error.response?.status < 500) {
+          this.logger.debug(
+            `Non-retryable error (${error.response.status}) for ${operationName}, attempt ${attempt + 1}`,
+          );
+          throw error;
+        }
+        
+        // Don't retry on last attempt
+        if (attempt === maxRetries) {
+          break;
+        }
+        
+        // Calculate exponential backoff delay
+        const delayMs = baseDelayMs * Math.pow(2, attempt);
+        this.logger.warn(
+          `Retrying ${operationName} after ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`,
+        );
+        
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    
+    // All retries exhausted
+    this.logger.error(
+      `${operationName} failed after ${maxRetries + 1} attempts`,
+    );
+    throw lastError;
+  }
+
   // Unified agent response interface
   private mapAgentResponse(data: any) {
     if (!data || typeof data.status !== 'string') {
@@ -156,7 +204,12 @@ export class SingleWalletFunctionsService {
       `Calling placeBet url=${url} agent=${agentId} round=${roundId}`,
     );
     try {
-      const resp = await firstValueFrom(this.http.post<any>(url, payload));
+      const resp = await this.retryWithBackoff(
+        () => firstValueFrom(this.http.post<any>(url, payload)),
+        3,
+        1000,
+        `placeBet agent=${agentId} user=${userId}`,
+      );
       const mappedResponse = this.mapAgentResponse(resp.data);
       
       // Check if agent rejected the bet
@@ -272,7 +325,12 @@ export class SingleWalletFunctionsService {
       `Calling settleBet url=${url} agent=${agentId} txId=${platformTxId}`,
     );
     try {
-      const resp = await firstValueFrom(this.http.post<any>(url, payload));
+      const resp = await this.retryWithBackoff(
+        () => firstValueFrom(this.http.post<any>(url, payload)),
+        3,
+        1000,
+        `settleBet agent=${agentId} txId=${platformTxId}`,
+      );
       const mappedResponse = this.mapAgentResponse(resp.data);
       
       // Check if agent rejected the settlement
@@ -408,13 +466,18 @@ export class SingleWalletFunctionsService {
       return txn;
     });
 
-    const messageObj = { action: 'refund', txns };
+    const messageObj = { action: 'cancelBet', txns };
     const payload = { key: cert, message: JSON.stringify(messageObj) };
     this.logger.debug(
       `Calling refundBet url=${url} agent=${agentId} txns=${txns.length}`,
     );
     try {
-      const resp = await firstValueFrom(this.http.post<any>(url, payload));
+      const resp = await this.retryWithBackoff(
+        () => firstValueFrom(this.http.post<any>(url, payload)),
+        3,
+        1000,
+        `refundBet agent=${agentId} user=${userId}`,
+      );
       const mappedResponse = this.mapAgentResponse(resp.data);
       
       // Check if agent rejected the refund

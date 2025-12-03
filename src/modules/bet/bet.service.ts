@@ -119,6 +119,15 @@ export class BetService {
       );
       throw new NotFoundException(ERROR_MESSAGES.SETTLEMENT_NOT_FOUND);
     }
+
+    // Idempotency check: if bet is already settled, return existing bet
+    if (bet.status === BetStatus.WON || bet.status === BetStatus.LOST) {
+      this.logger.warn(
+        `Settlement idempotency: bet already settled (${params.externalPlatformTxId}, status: ${bet.status})`,
+      );
+      return bet; // Return existing settled bet to prevent double settlement
+    }
+
     bet.winAmount = params.winAmount;
     bet.settleType = params.settleType;
     bet.settlementRefTxId = params.settlementRefTxId;

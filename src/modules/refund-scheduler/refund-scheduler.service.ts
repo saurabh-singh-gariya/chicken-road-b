@@ -93,6 +93,17 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
       `Processing refunds for bets older than ${olderThanMs}ms`,
     );
 
+    // Acquire distributed lock to prevent concurrent processing across multiple instances
+    const lockKey = 'refund-scheduler-lock';
+    const lockAcquired = await this.redisService.acquireLock(lockKey, 300); // 5 minute lock
+    
+    if (!lockAcquired) {
+      this.logger.debug(
+        'Refund scheduler lock already held by another instance, skipping this run',
+      );
+      return;
+    }
+
     try {
       const oldBets = await this.betService.findOldPlacedBets(olderThanMs);
 
@@ -117,6 +128,7 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
 
       let successCount = 0;
       let failureCount = 0;
+      let skippedCount = 0;
       const BATCH_SIZE = 5;
 
       // Process each user/operator group
@@ -128,6 +140,16 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
           const batch = bets.slice(i, i + BATCH_SIZE);
           
           try {
+            // Check if session exists before attempting refund
+            const sessionStillActive = await this.sessionExists(userId, operatorId);
+            if (sessionStillActive) {
+              skippedCount += batch.length;
+              this.logger.debug(
+                `Skipping refund for batch of ${batch.length} bet(s) - session still active for user ${userId}`,
+              );
+              continue;
+            }
+
             await this.refundBets(batch);
             successCount += batch.length;
             this.logger.log(
@@ -144,13 +166,36 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.logger.log(
-        `Refund processing complete: ${successCount} succeeded, ${failureCount} failed`,
+        `Refund processing complete: ${successCount} succeeded, ${failureCount} failed, ${skippedCount} skipped (session active)`,
       );
     } catch (error) {
       this.logger.error(
         `Error processing refunds: ${error.message}`,
         error.stack,
       );
+    } finally {
+      // Always release the lock, even if an error occurred
+      await this.redisService.releaseLock(lockKey);
+    }
+  }
+
+  /**
+   * Check if a game session exists in Redis for the given user and operator
+   * @param userId - User ID
+   * @param operatorId - Operator/Agent ID
+   * @returns true if session exists, false otherwise
+   */
+  private async sessionExists(userId: string, operatorId: string): Promise<boolean> {
+    try {
+      const redisKey = `gameSession:${userId}-${operatorId}`;
+      const session = await this.redisService.get(redisKey);
+      return session !== null && session !== undefined;
+    } catch (error) {
+      // If Redis check fails, err on the side of caution and skip refund
+      this.logger.warn(
+        `Failed to check session existence for user ${userId}: ${error.message}. Skipping refund to prevent race condition.`,
+      );
+      return true; // Return true to skip refund when check fails
     }
   }
 
@@ -167,6 +212,8 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
     const userId = bets[0].userId;
     const operatorId = bets[0].operatorId;
 
+    // Note: Session existence check is now done in processRefunds() before calling this method
+    // This method assumes session doesn't exist and proceeds with refund
     this.logger.log(
       `Processing refund batch of ${bets.length} bet(s) for user: ${userId}`,
     );

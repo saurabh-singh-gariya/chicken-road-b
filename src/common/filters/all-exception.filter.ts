@@ -42,6 +42,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return;
     }
 
+    // Health endpoint should return proper HTTP status codes
+    if (requestUrl === '/health' || requestUrl?.startsWith('/health')) {
+      this.handleHealthException(exception, request, response, requestUrl);
+      return;
+    }
+
     const { code, desc } = this.mapException(exception);
     this.logger.error(
       `Exception: code=${code} desc="${desc}" path=${requestUrl}`,
@@ -71,6 +77,36 @@ export class AllExceptionsFilter implements ExceptionFilter {
     response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       message: ERROR_MESSAGES.INTERNAL_ERROR,
+    });
+  }
+
+  private handleHealthException(
+    exception: unknown,
+    request: any,
+    response: any,
+    requestUrl: string,
+  ): void {
+    if (exception instanceof HttpException) {
+      const status = exception.getStatus();
+      const exceptionResponse = exception.getResponse();
+      this.logger.error(
+        `Health check error on ${requestUrl}: ${this.safeStringify(exceptionResponse)}`,
+      );
+      response.status(status).json({
+        status: 'error',
+        timestamp: new Date().toISOString(),
+        error: this.normalizeMessage(exceptionResponse),
+      });
+      return;
+    }
+
+    this.logger.error(
+      `Unhandled exception on health endpoint ${requestUrl}: ${this.safeStringify(exception)}`,
+    );
+    response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      error: ERROR_MESSAGES.INTERNAL_ERROR,
     });
   }
 

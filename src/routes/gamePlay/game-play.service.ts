@@ -107,16 +107,28 @@ export class GamePlayService {
     incoming: any,
   ): Promise<BetStepResponse | { error: string; details?: any[] }> {
 
-    const redisKey = `gameSession:${userId}-${agentId}`;
-    const existingSession: GameSession =
-      await this.redisService.get<any>(redisKey);
-
-    if (existingSession && existingSession.isActive) {
+    // Acquire distributed lock to prevent concurrent bet placement
+    const lockKey = `bet-lock:${userId}-${agentId}`;
+    const lockAcquired = await this.redisService.acquireLock(lockKey, 30); // 30 second lock
+    
+    if (!lockAcquired) {
       this.logger.warn(
-        `User ${userId} attempted to place bet while having active session`,
+        `Concurrent bet placement attempt blocked: user=${userId} agent=${agentId}`,
       );
       return { error: ERROR_MESSAGES.ACTIVE_SESSION_EXISTS };
     }
+
+    try {
+      const redisKey = `gameSession:${userId}-${agentId}`;
+      const existingSession: GameSession =
+        await this.redisService.get<any>(redisKey);
+
+      if (existingSession && existingSession.isActive) {
+        this.logger.warn(
+          `User ${userId} attempted to place bet while having active session`,
+        );
+        return { error: ERROR_MESSAGES.ACTIVE_SESSION_EXISTS };
+      }
 
     const dto = plainToInstance(BetPayloadDto, incoming);
     const errors = await validate(dto, { whitelist: true });
@@ -264,6 +276,10 @@ export class GamePlayService {
     );
 
     return resp;
+    } finally {
+      // Always release the lock, even if an error occurred
+      await this.redisService.releaseLock(lockKey);
+    }
   }
 
   async performStepFlow(
@@ -282,6 +298,21 @@ export class GamePlayService {
     if (!gameSession || !gameSession.isActive) {
       this.logger.warn(
         `No active session for step: user=${userId} agent=${agentId} lineNumber=${lineNumber}`,
+      );
+      return { error: ERROR_MESSAGES.NO_ACTIVE_SESSION };
+    }
+
+    // Validate session state consistency
+    if (!gameSession.coefficients || gameSession.coefficients.length === 0) {
+      this.logger.error(
+        `Invalid session state: missing coefficients user=${userId} agent=${agentId}`,
+      );
+      return { error: ERROR_MESSAGES.NO_ACTIVE_SESSION };
+    }
+
+    if (typeof gameSession.currentStep !== 'number' || gameSession.currentStep < GAME_CONSTANTS.INITIAL_STEP) {
+      this.logger.error(
+        `Invalid session state: invalid currentStep user=${userId} agent=${agentId} step=${gameSession.currentStep}`,
       );
       return { error: ERROR_MESSAGES.NO_ACTIVE_SESSION };
     }
@@ -351,6 +382,14 @@ export class GamePlayService {
       gameSession.currentStep >= 0
         ? Number(gameSession.coefficients[gameSession.currentStep])
         : 0;
+
+    // Validate session state before saving
+    if (!gameSession.platformBetTxId || !gameSession.roundId) {
+      this.logger.error(
+        `Invalid session state: missing platformBetTxId or roundId user=${userId} agent=${agentId}`,
+      );
+      return { error: ERROR_MESSAGES.NO_ACTIVE_SESSION };
+    }
 
     const sessionTTL = await this.redisService.getSessionTTL();
     await this.redisService.set(redisKey, gameSession, sessionTTL);

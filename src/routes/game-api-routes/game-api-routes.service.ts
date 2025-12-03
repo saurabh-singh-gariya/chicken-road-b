@@ -1,5 +1,4 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
-import { GameConfigService } from '../../modules/gameConfig/game-config.service';
 import { JwtTokenService } from '../../modules/jwt/jwt-token.service';
 import { UserSessionService } from '../../modules/user-session/user-session.service';
 import { AuthLoginDto, AuthLoginResponse } from './DTO/auth-login.dto';
@@ -12,7 +11,6 @@ export class GameApiRoutesService {
   constructor(
     private readonly jwtTokenService: JwtTokenService,
     private readonly userSessionService: UserSessionService,
-    private readonly gameConfigService: GameConfigService,
   ) {}
 
   async authenticateGame(dto: AuthLoginDto): Promise<AuthLoginResponse> {
@@ -101,8 +99,8 @@ export class GameApiRoutesService {
     );
 
     const actualLoggedInUsers = await this.userSessionService.getLoggedInUserCount();
-    const pumpValue = await this.gameConfigService.getOnlineCounterPumpValue();
-    const total = Math.max(actualLoggedInUsers, actualLoggedInUsers + pumpValue);
+    const pumpValue = Math.floor(Math.random() * (15000 - 11000 + 1)) + 11000;
+    const total = actualLoggedInUsers + pumpValue;
 
     this.logger.log(
       `[getOnlineCounter] User count - actual: ${actualLoggedInUsers}, pump: ${pumpValue}, total: ${total}`,
