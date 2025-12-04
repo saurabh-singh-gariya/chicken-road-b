@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 import { AgentsService } from '../../modules/agents/agents.service';
+import { BetService } from '../../modules/bet/bet.service';
 import { GameConfigService } from '../../modules/gameConfig/game-config.service';
 import {
   WalletErrorService,
@@ -27,6 +28,7 @@ export class SingleWalletFunctionsService {
     private readonly http: HttpService,
     private readonly gameConfigService: GameConfigService,
     private readonly walletErrorService: WalletErrorService,
+    private readonly betService: BetService,
   ) { }
 
   private async resolveAgent(agentId: string) {
@@ -120,7 +122,32 @@ export class SingleWalletFunctionsService {
     this.logger.debug(`Calling getBalance url=${url} agent=${agentId}`);
     try {
       const resp = await firstValueFrom(this.http.post<any>(url, payload));
-      return this.mapAgentResponse(resp.data);
+      const mappedResponse = this.mapAgentResponse(resp.data);
+      
+      // Check if agent rejected the request (status !== '0000' means failure)
+      if (mappedResponse.status !== '0000') {
+        const errorMessage = `Agent rejected getBalance with status: ${mappedResponse.status}`;
+        try {
+          await this.walletErrorService.createError({
+            agentId,
+            userId,
+            apiAction: WalletApiAction.GET_BALANCE,
+            errorType: WalletErrorType.AGENT_REJECTED,
+            errorMessage,
+            requestPayload: { messageObj, url },
+            responseData: mappedResponse.raw,
+            httpStatus: resp.status,
+            callbackUrl: url,
+          });
+        } catch (logError) {
+          this.logger.error(
+            `Failed to log wallet error to database: ${logError}`,
+          );
+        }
+        throw new InternalServerErrorException(errorMessage);
+      }
+      
+      return mappedResponse;
     } catch (err: any) {
       this.logger.error(
         `getBalance failed agent=${agentId} user=${userId}`,
@@ -217,22 +244,31 @@ export class SingleWalletFunctionsService {
         `[WALLET_API_RESPONSE] user=${userId} agent=${agentId} action=placeBet status=${mappedResponse.status} balance=${mappedResponse.balance} responseTime=${responseTime}ms`,
       );
       
-      // Check if agent rejected the bet
+      // Check if agent rejected the bet (status !== '0000' means failure)
       if (mappedResponse.status !== '0000') {
-        await this.walletErrorService.createError({
-          agentId,
-          userId,
-          apiAction: WalletApiAction.PLACE_BET,
-          errorType: WalletErrorType.AGENT_REJECTED,
-          errorMessage: `Agent rejected bet with status: ${mappedResponse.status}`,
-          requestPayload: { messageObj, url },
-          responseData: mappedResponse.raw,
-          platformTxId,
-          roundId,
-          betAmount: amount,
-          currency,
-          callbackUrl: url,
-        });
+        const errorMessage = `Agent rejected bet with status: ${mappedResponse.status}`;
+        try {
+          await this.walletErrorService.createError({
+            agentId,
+            userId,
+            apiAction: WalletApiAction.PLACE_BET,
+            errorType: WalletErrorType.AGENT_REJECTED,
+            errorMessage,
+            requestPayload: { messageObj, url },
+            responseData: mappedResponse.raw,
+            httpStatus: resp.status,
+            platformTxId,
+            roundId,
+            betAmount: amount,
+            currency,
+            callbackUrl: url,
+          });
+        } catch (logError) {
+          this.logger.error(
+            `Failed to log wallet error to database: ${logError}`,
+          );
+        }
+        throw new InternalServerErrorException(errorMessage);
       }
       
       return mappedResponse;
@@ -343,24 +379,45 @@ export class SingleWalletFunctionsService {
         `[WALLET_API_RESPONSE] user=${userId} agent=${agentId} action=settleBet status=${mappedResponse.status} balance=${mappedResponse.balance} responseTime=${responseTime}ms`,
       );
       
-      // Check if agent rejected the settlement
+      // Check if agent rejected the settlement (status !== '0000' means failure)
       if (mappedResponse.status !== '0000') {
-        await this.walletErrorService.createError({
-          agentId,
-          userId,
-          apiAction: WalletApiAction.SETTLE_BET,
-          errorType: WalletErrorType.AGENT_REJECTED,
-          errorMessage: `Agent rejected settlement with status: ${mappedResponse.status}`,
-          requestPayload: { messageObj, url },
-          responseData: mappedResponse.raw,
-          httpStatus: resp.status,
-          platformTxId,
-          roundId,
-          betAmount,
-          winAmount,
-          currency: gamePayloads.currency || DEFAULTS.CURRENCY.DEFAULT,
-          callbackUrl: url,
-        });
+        const errorMessage = `Agent rejected settlement with status: ${mappedResponse.status}`;
+        try {
+          await this.walletErrorService.createError({
+            agentId,
+            userId,
+            apiAction: WalletApiAction.SETTLE_BET,
+            errorType: WalletErrorType.AGENT_REJECTED,
+            errorMessage,
+            requestPayload: { messageObj, url },
+            responseData: mappedResponse.raw,
+            httpStatus: resp.status,
+            platformTxId,
+            roundId,
+            betAmount,
+            winAmount,
+            currency: gamePayloads.currency || DEFAULTS.CURRENCY.DEFAULT,
+            callbackUrl: url,
+          });
+        } catch (logError) {
+          this.logger.error(
+            `Failed to log wallet error to database: ${logError}`,
+          );
+        }
+
+        // Mark bet as settlement failed when agent rejects
+        try {
+          await this.betService.markSettlementFailed(platformTxId, userId);
+          this.logger.warn(
+            `Marked bet as settlement_failed (agent rejected): txId=${platformTxId} user=${userId} status=${mappedResponse.status}`,
+          );
+        } catch (betUpdateError) {
+          this.logger.error(
+            `Failed to mark bet as settlement_failed: txId=${platformTxId} error=${betUpdateError}`,
+          );
+        }
+
+        throw new InternalServerErrorException(errorMessage);
       }
       
       return mappedResponse;
@@ -419,6 +476,20 @@ export class SingleWalletFunctionsService {
           `Failed to log wallet error to database: ${logError}`,
         );
       }
+
+      // Mark bet as settlement failed after all retries exhausted
+      try {
+        await this.betService.markSettlementFailed(platformTxId, userId);
+        this.logger.warn(
+          `Marked bet as settlement_failed: txId=${platformTxId} user=${userId}`,
+        );
+      } catch (betUpdateError) {
+        this.logger.error(
+          `Failed to mark bet as settlement_failed: txId=${platformTxId} error=${betUpdateError}`,
+        );
+        // Don't throw - we still want to throw the original error
+      }
+
       throw err;
     }
   }
@@ -505,24 +576,53 @@ export class SingleWalletFunctionsService {
         `[WALLET_API_RESPONSE] user=${userId} agent=${agentId} action=refundBet status=${mappedResponse.status} balance=${mappedResponse.balance} txCount=${txns.length} responseTime=${responseTime}ms`,
       );
       
-      // Check if agent rejected the refund
+      // Check if agent rejected the refund (status !== '0000' means failure)
       if (mappedResponse.status !== '0000') {
-        await this.walletErrorService.createError({
-          agentId,
-          userId,
-          apiAction: WalletApiAction.REFUND_BET,
-          errorType: WalletErrorType.AGENT_REJECTED,
-          errorMessage: `Agent rejected refund with status: ${mappedResponse.status}`,
-          requestPayload: { messageObj, url },
-          responseData: mappedResponse.raw,
-          httpStatus: resp.status,
-          platformTxId: refundTransactions[0]?.platformTxId,
-          roundId: refundTransactions[0]?.roundId,
-          betAmount: refundTransactions.reduce((sum, txn) => sum + txn.betAmount, 0),
-          winAmount: refundTransactions.reduce((sum, txn) => sum + txn.winAmount, 0),
-          currency,
-          callbackUrl: url,
-        });
+        const errorMessage = `Agent rejected refund with status: ${mappedResponse.status}`;
+        try {
+          await this.walletErrorService.createError({
+            agentId,
+            userId,
+            apiAction: WalletApiAction.REFUND_BET,
+            errorType: WalletErrorType.AGENT_REJECTED,
+            errorMessage,
+            requestPayload: { messageObj, url },
+            responseData: mappedResponse.raw,
+            httpStatus: resp.status,
+            platformTxId: refundTransactions[0]?.platformTxId,
+            roundId: refundTransactions[0]?.roundId,
+            betAmount: refundTransactions.reduce((sum, txn) => sum + txn.betAmount, 0),
+            winAmount: refundTransactions.reduce((sum, txn) => sum + txn.winAmount, 0),
+            currency,
+            callbackUrl: url,
+          });
+        } catch (logError) {
+          this.logger.error(
+            `Failed to log wallet error to database: ${logError}`,
+          );
+        }
+
+        // Mark all affected bets as settlement failed when agent rejects
+        try {
+          for (const refundTxn of refundTransactions) {
+            try {
+              await this.betService.markSettlementFailed(refundTxn.platformTxId, userId);
+              this.logger.warn(
+                `Marked bet as settlement_failed (agent rejected): txId=${refundTxn.platformTxId} user=${userId} status=${mappedResponse.status}`,
+              );
+            } catch (betUpdateError) {
+              this.logger.error(
+                `Failed to mark bet as settlement_failed: txId=${refundTxn.platformTxId} error=${betUpdateError}`,
+              );
+            }
+          }
+        } catch (betUpdateError) {
+          this.logger.error(
+            `Failed to mark bets as settlement_failed for refund: error=${betUpdateError}`,
+          );
+        }
+
+        throw new InternalServerErrorException(errorMessage);
       }
       
       return mappedResponse;
@@ -571,6 +671,28 @@ export class SingleWalletFunctionsService {
         this.logger.error(
           `Failed to log wallet error to database: ${logError}`,
         );
+      }
+
+      // Mark all affected bets as settlement failed after all retries exhausted
+      try {
+        for (const refundTxn of refundTransactions) {
+          try {
+            await this.betService.markSettlementFailed(refundTxn.platformTxId, userId);
+            this.logger.warn(
+              `Marked bet as settlement_failed: txId=${refundTxn.platformTxId} user=${userId}`,
+            );
+          } catch (betUpdateError) {
+            this.logger.error(
+              `Failed to mark bet as settlement_failed: txId=${refundTxn.platformTxId} error=${betUpdateError}`,
+            );
+            // Continue with other transactions
+          }
+        }
+      } catch (betUpdateError) {
+        this.logger.error(
+          `Failed to mark bets as settlement_failed for refund: error=${betUpdateError}`,
+        );
+        // Don't throw - we still want to throw the original error
       }
 
       throw err;
