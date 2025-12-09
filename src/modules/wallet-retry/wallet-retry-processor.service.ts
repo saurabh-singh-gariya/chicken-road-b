@@ -5,7 +5,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { WalletRetryJob, WalletRetryJobStatus } from '../../entities/wallet-retry-job.entity';
-import { WalletApiAction } from '../../entities/wallet-error.entity';
+import { WalletApiAction } from '../../common/enums/wallet.enums';
 import { BetStatus } from '../../entities/bet.entity';
 import { SingleWalletFunctionsService } from '../../routes/single-wallet-functions/single-wallet-functions.service';
 import { BetService } from '../bet/bet.service';

@@ -18,7 +18,6 @@ import { AgentsModule } from './modules/agents/agents.module';
 import { BetModule } from './modules/bet/bet.module';
 import { BetCleanupSchedulerModule } from './modules/bet-cleanup/bet-cleanup-scheduler.module';
 import { HazardModule } from './modules/hazard/hazard.module';
-import { WalletErrorModule } from './modules/wallet-error/wallet-error.module';
 import { WalletAuditModule } from './modules/wallet-audit/wallet-audit.module';
 import { WalletRetryModule } from './modules/wallet-retry/wallet-retry.module';
 import { CommonApiFunctionsModule } from './routes/common-api-functions/common-api-functions.module';
@@ -86,7 +85,6 @@ import {HealthController} from './routes/extra/health.controller';
     HazardModule,
     BetModule,
     BetCleanupSchedulerModule,
-    WalletErrorModule,
     WalletAuditModule,
     WalletRetryModule,
     CommonApiFunctionsModule,

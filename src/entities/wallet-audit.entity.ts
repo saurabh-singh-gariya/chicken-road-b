@@ -5,7 +5,7 @@ import {
   Index,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { WalletApiAction, WalletErrorType } from './wallet-error.entity';
+import { WalletApiAction, WalletErrorType } from '../common/enums/wallet.enums';
 
 export enum WalletAuditStatus {
   SUCCESS = 'SUCCESS',

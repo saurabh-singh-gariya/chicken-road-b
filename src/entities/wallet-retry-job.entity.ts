@@ -6,7 +6,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { WalletApiAction } from './wallet-error.entity';
+import { WalletApiAction } from '../common/enums/wallet.enums';
 
 export enum WalletRetryJobStatus {
   PENDING = 'PENDING',

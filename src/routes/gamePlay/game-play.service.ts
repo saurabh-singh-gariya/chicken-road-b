@@ -8,13 +8,6 @@ import { FairnessService } from '../../modules/fairness/fairness.service';
 import { GameConfigService } from '../../modules/gameConfig/game-config.service';
 import { HazardSchedulerService } from '../../modules/hazard/hazard-scheduler.service';
 import { RedisService } from '../../modules/redis/redis.service';
-import {
-  WalletErrorService,
-} from '../../modules/wallet-error/wallet-error.service';
-import {
-  WalletApiAction,
-  WalletErrorType,
-} from '../../entities/wallet-error.entity';
 import { SingleWalletFunctionsService } from '../single-wallet-functions/single-wallet-functions.service';
 import { BetPayloadDto, Difficulty } from './DTO/bet-payload.dto';
 import { DEFAULTS } from '../../config/defaults.config';
@@ -96,7 +89,6 @@ export class GamePlayService {
     private readonly singleWalletFunctionsService: SingleWalletFunctionsService,
     private readonly betService: BetService,
     private readonly hazardSchedulerService: HazardSchedulerService,
-    private readonly walletErrorService: WalletErrorService,
     private readonly fairnessService: FairnessService,
   ) { }
 
@@ -462,28 +454,9 @@ export class GamePlayService {
           error,
         );
 
-        // Log error to database (note: error may already be logged in singleWalletFunctionsService,
-        // but we log here with game context for better tracking)
-        try {
-          await this.walletErrorService.createError({
-            agentId: gameSession.agentId,
-            userId,
-            apiAction: WalletApiAction.SETTLE_BET,
-            errorType: WalletErrorType.UNKNOWN_ERROR,
-            errorMessage: error.message || ERROR_MESSAGES.SETTLEMENT_FAILED,
-            errorStack: error.stack,
-            platformTxId: gameSession.platformBetTxId,
-            roundId: gameSession.roundId,
-            betAmount: gameSession.betAmount,
-            winAmount: settlementAmount,
-            currency: gameSession.currency,
-            rawError: JSON.stringify(error),
-          });
-        } catch (logError) {
-          this.logger.error(
-            `Failed to log settlement error to database: ${logError}`,
-          );
-        }
+        // Error already logged in singleWalletFunctionsService.settleBet() with full details
+        // (requestId, responseTime, httpStatus, etc.) and retry job already created
+        // No need to log again here to avoid duplicate entries
 
         throw new Error(ERROR_MESSAGES.SETTLEMENT_FAILED);
       }
@@ -606,27 +579,9 @@ export class GamePlayService {
         error,
       );
 
-      // Log error to database
-      try {
-        await this.walletErrorService.createError({
-          agentId: gameSession.agentId,
-          userId,
-          apiAction: WalletApiAction.SETTLE_BET,
-          errorType: WalletErrorType.UNKNOWN_ERROR,
-          errorMessage: error.message || ERROR_MESSAGES.SETTLEMENT_FAILED,
-          errorStack: error.stack,
-          platformTxId: gameSession.platformBetTxId,
-          roundId: gameSession.roundId,
-          betAmount: gameSession.betAmount,
-          winAmount: settlementAmount,
-          currency: gameSession.currency,
-          rawError: JSON.stringify(error),
-        });
-      } catch (logError) {
-        this.logger.error(
-          `Failed to log cashout settlement error to database: ${logError}`,
-        );
-      }
+      // Error already logged in singleWalletFunctionsService.settleBet() with full details
+      // (requestId, responseTime, httpStatus, etc.) and retry job already created
+      // No need to log again here to avoid duplicate entries
 
       throw new Error(ERROR_MESSAGES.SETTLEMENT_FAILED);
     }

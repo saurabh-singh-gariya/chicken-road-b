@@ -13,7 +13,7 @@ import { GameConfigService } from '../../modules/gameConfig/game-config.service'
 import {
   WalletApiAction,
   WalletErrorType,
-} from '../../entities/wallet-error.entity';
+} from '../../common/enums/wallet.enums';
 import { WalletAuditService } from '../../modules/wallet-audit/wallet-audit.service';
 import { WalletAuditStatus } from '../../entities/wallet-audit.entity';
 import { WalletRetryJobService } from '../../modules/wallet-retry/wallet-retry-job.service';

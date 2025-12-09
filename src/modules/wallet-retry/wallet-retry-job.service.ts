@@ -8,7 +8,7 @@ import {
   WalletRetryJob,
   WalletRetryJobStatus,
 } from '../../entities/wallet-retry-job.entity';
-import { WalletApiAction } from '../../entities/wallet-error.entity';
+import { WalletApiAction } from '../../common/enums/wallet.enums';
 
 export interface CreateRetryJobParams {
   platformTxId: string;

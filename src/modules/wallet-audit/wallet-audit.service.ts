@@ -11,7 +11,7 @@ import {
 import {
   WalletApiAction,
   WalletErrorType,
-} from '../../entities/wallet-error.entity';
+} from '../../common/enums/wallet.enums';
 
 export interface CreateWalletAuditParams {
   requestId?: string;
