@@ -11,6 +11,28 @@ import { DEFAULTS } from './config/defaults.config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
+  // Global error handlers to prevent app crashes
+  process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+    const winstonLogger = new WinstonLoggerService();
+    winstonLogger.error(
+      `Unhandled Promise Rejection: ${reason?.message || reason}`,
+      reason?.stack || JSON.stringify(reason),
+      'UnhandledRejection',
+    );
+    // Don't exit - log and continue
+  });
+
+  process.on('uncaughtException', (error: Error) => {
+    const winstonLogger = new WinstonLoggerService();
+    winstonLogger.error(
+      `Uncaught Exception: ${error.message}`,
+      error.stack,
+      'UncaughtException',
+    );
+    // Exit gracefully for uncaught exceptions (they're more serious)
+    process.exit(1);
+  });
+
   const winstonLogger = new WinstonLoggerService();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {

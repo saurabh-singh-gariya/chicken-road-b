@@ -39,8 +39,8 @@ export class GameConfigService {
 
     let secret: any;
     try {
-      let secretJson = await this.getConfig('jwt.secret');
-      secret = secretJson.secret;
+      secret = await this.getConfig('jwt.secret');
+      return secret;
     } catch (e) {
       secret = DEFAULTS.JWT.DEFAULT_SECRET;
       this.logger.warn('Using env JWT_SECRET (DB entry missing)');

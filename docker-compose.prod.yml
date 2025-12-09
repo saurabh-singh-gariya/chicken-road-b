@@ -41,10 +41,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 100M
+          memory: 512M
         reservations:
-          memory: 50M
-    command: redis-server --appendonly yes --maxmemory 80mb --maxmemory-policy allkeys-lru
+          memory: 256M
+    command: redis-server --appendonly yes --maxmemory 400mb --maxmemory-policy allkeys-lru  # BOTTLENECK FIX: Increased from 80mb to 400mb
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
