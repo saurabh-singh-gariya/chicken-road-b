@@ -7,6 +7,7 @@ import {
 import { BetService } from '../bet/bet.service';
 import { RedisService } from '../redis/redis.service';
 import { SingleWalletFunctionsService } from '../../routes/single-wallet-functions/single-wallet-functions.service';
+import { GameService } from '../games/game.service';
 import { Bet, BetStatus } from '../../entities/bet.entity';
 import { DEFAULTS } from '../../config/defaults.config';
 
@@ -25,6 +26,7 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly betService: BetService,
     private readonly redisService: RedisService,
     private readonly singleWalletFunctionsService: SingleWalletFunctionsService,
+    private readonly gameService: GameService,
   ) {}
 
   async onModuleInit() {
@@ -39,10 +41,10 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
    * Start the refund scheduler
    * Calculates interval based on Redis session TTL + buffer
    */
-  private async startScheduler() {
+  private async startScheduler(gameCode: string = 'chicken-road-two') {
     try {
       // Get session TTL in seconds, convert to milliseconds
-      const sessionTTLSeconds = await this.redisService.getSessionTTL();
+      const sessionTTLSeconds = await this.redisService.getSessionTTL(gameCode);
       const sessionTTLMs = sessionTTLSeconds * 1000;
       const bufferMs = this.BUFFER_MINUTES * 60 * 1000;
       const intervalMs = sessionTTLMs + bufferMs;
@@ -140,9 +142,11 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
           const batch = bets.slice(i, i + BATCH_SIZE);
           
           try {
-            // Check if session exists before attempting refund
-            const sessionStillActive = await this.sessionExists(userId, operatorId);
-            if (sessionStillActive) {
+            // Check if any session exists for bets in this batch (check each bet's gameCode)
+            const hasActiveSession = await Promise.all(
+              batch.map(bet => this.sessionExists(userId, operatorId, bet.gameCode))
+            );
+            if (hasActiveSession.some(active => active)) {
               skippedCount += batch.length;
               this.logger.debug(
                 `Skipping refund for batch of ${batch.length} bet(s) - session still active for user ${userId}`,
@@ -180,20 +184,21 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Check if a game session exists in Redis for the given user and operator
+   * Check if a game session exists in Redis for the given user, operator, and gameCode
    * @param userId - User ID
    * @param operatorId - Operator/Agent ID
+   * @param gameCode - Game code
    * @returns true if session exists, false otherwise
    */
-  private async sessionExists(userId: string, operatorId: string): Promise<boolean> {
+  private async sessionExists(userId: string, operatorId: string, gameCode: string): Promise<boolean> {
     try {
-      const redisKey = `gameSession:${userId}-${operatorId}`;
+      const redisKey = `gameSession:${userId}-${operatorId}-${gameCode}`;
       const session = await this.redisService.get(redisKey);
       return session !== null && session !== undefined;
     } catch (error) {
       // If Redis check fails, err on the side of caution and skip refund
       this.logger.warn(
-        `Failed to check session existence for user ${userId}: ${error.message}. Skipping refund to prevent race condition.`,
+        `Failed to check session existence for user ${userId} gameCode ${gameCode}: ${error.message}. Skipping refund to prevent race condition.`,
       );
       return true; // Return true to skip refund when check fails
     }
@@ -219,9 +224,27 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
     );
 
     // Build refund transactions array
-    const refundTransactions = bets.map((bet) => {
+    const refundTransactions = await Promise.all(bets.map(async (bet) => {
       const originalPlatformTxId = bet.externalPlatformTxId;
       const betAmount = Number(bet.betAmount);
+      
+      // Get game payloads from GameService using gameCode
+      let gamePayloads;
+      try {
+        gamePayloads = await this.gameService.getGamePayloads(bet.gameCode);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to get game payloads for gameCode ${bet.gameCode}, using defaults: ${error.message}`,
+        );
+        // Fallback to defaults if game not found
+        gamePayloads = {
+          platform: DEFAULTS.BET.DEFAULT_PLATFORM,
+          gameType: DEFAULTS.BET.DEFAULT_GAME_TYPE,
+          gameCode: bet.gameCode || DEFAULTS.BET.DEFAULT_GAME_CODE,
+          gameName: DEFAULTS.BET.DEFAULT_GAME_NAME,
+          settleType: 'platformTxId',
+        };
+      }
       
       return {
         platformTxId: originalPlatformTxId,
@@ -233,16 +256,16 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
         updateTime: new Date().toISOString(),
         roundId: bet.roundId,
         gamePayloads: {
-          platform: bet.platform || DEFAULTS.BET.DEFAULT_PLATFORM,
-          gameType: bet.gameType || DEFAULTS.BET.DEFAULT_GAME_TYPE,
-          gameCode: bet.gameCode || DEFAULTS.BET.DEFAULT_GAME_CODE,
-          gameName: bet.gameName || DEFAULTS.BET.DEFAULT_GAME_NAME,
+          platform: gamePayloads.platform,
+          gameType: gamePayloads.gameType,
+          gameCode: gamePayloads.gameCode,
+          gameName: gamePayloads.gameName,
           betType: bet.betType || null,
           currency: bet.currency || DEFAULTS.CURRENCY.DEFAULT,
         },
         gameInfo: bet.gameInfo ? JSON.parse(bet.gameInfo) : undefined,
       };
-    });
+    }));
 
     try {
       // Call refund API with all transactions in batch

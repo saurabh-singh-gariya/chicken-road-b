@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Between, FindOptionsWhere, Repository } from 'typeorm';
 import { Bet, BetStatus, Difficulty } from '../../entities/bet.entity';
 import { DEFAULTS } from '../../config/defaults.config';
+import { GameService } from '../games/game.service';
 
 export interface CreateBetParams {
   externalPlatformTxId: string;
@@ -17,10 +18,7 @@ export interface CreateBetParams {
   betType?: string;
   betAmount: string;
   currency: string;
-  platform?: string;
-  gameType?: string;
-  gameCode?: string;
-  gameName?: string;
+  gameCode: string;
   isPremium?: boolean;
   betPlacedAt?: Date;
   balanceAfterBet?: string;
@@ -64,17 +62,28 @@ const ERROR_MESSAGES = {
 export class BetService {
   private readonly logger = new Logger(BetService.name);
 
-  constructor(@InjectRepository(Bet) private readonly repo: Repository<Bet>) { }
+  constructor(
+    @InjectRepository(Bet) private readonly repo: Repository<Bet>,
+    private readonly gameService: GameService,
+  ) { }
 
   private whereByExternalTx(
     externalPlatformTxId: string,
+    gameCode?: string,
   ): FindOptionsWhere<Bet> {
-    return { externalPlatformTxId };
+    const where: FindOptionsWhere<Bet> = { externalPlatformTxId };
+    if (gameCode) {
+      where.gameCode = gameCode;
+    }
+    return where;
   }
 
   async createPlacement(params: CreateBetParams): Promise<Bet> {
+    // Validate gameCode exists and is active
+    await this.gameService.validateGame(params.gameCode);
+
     const existing = await this.repo.findOne({
-      where: this.whereByExternalTx(params.externalPlatformTxId),
+      where: this.whereByExternalTx(params.externalPlatformTxId, params.gameCode),
     });
     if (existing) {
       this.logger.warn(
@@ -90,10 +99,7 @@ export class BetService {
       betType: params.betType,
       betAmount: params.betAmount,
       currency: params.currency,
-      platform: params.platform,
-      gameType: params.gameType,
       gameCode: params.gameCode,
-      gameName: params.gameName,
       isPremium: params.isPremium,
       betPlacedAt: params.betPlacedAt,
       balanceAfterBet: params.balanceAfterBet,
@@ -104,7 +110,7 @@ export class BetService {
     });
     const saved = await this.repo.save(entity);
     this.logger.log(
-      `Bet placed: ${params.externalPlatformTxId} (user: ${params.userId}, amount: ${params.betAmount})`,
+      `Bet placed: ${params.externalPlatformTxId} (game: ${params.gameCode}, user: ${params.userId}, amount: ${params.betAmount})`,
     );
     return saved;
   }
@@ -129,7 +135,6 @@ export class BetService {
     }
 
     bet.winAmount = params.winAmount;
-    bet.settleType = params.settleType;
     bet.settlementRefTxId = params.settlementRefTxId;
     bet.settledAt = params.settledAt ?? new Date();
     bet.balanceAfterSettlement = params.balanceAfterSettlement;
@@ -189,30 +194,53 @@ export class BetService {
     });
   }
 
-  async getByExternalTxId(externalPlatformTxId: string): Promise<Bet | null> {
+  async getByExternalTxId(externalPlatformTxId: string, gameCode?: string): Promise<Bet | null> {
     return this.repo.findOne({
-      where: this.whereByExternalTx(externalPlatformTxId),
+      where: this.whereByExternalTx(externalPlatformTxId, gameCode),
     });
   }
 
-  async listUserBets(userId: string, limit: number = DEFAULTS.BET.DEFAULT_LIMIT): Promise<Bet[]> {
+  async findBetByRoundId(gameCode: string, roundId: string): Promise<Bet | null> {
+    return this.repo.findOne({
+      where: { gameCode, roundId },
+    });
+  }
+
+  async findBetByPlatformTxId(gameCode: string, externalPlatformTxId: string): Promise<Bet | null> {
+    return this.repo.findOne({
+      where: { gameCode, externalPlatformTxId },
+    });
+  }
+
+  async listUserBets(userId: string, gameCode?: string, limit: number = DEFAULTS.BET.DEFAULT_LIMIT): Promise<Bet[]> {
+    const where: FindOptionsWhere<Bet> = { userId };
+    if (gameCode) {
+      where.gameCode = gameCode;
+    }
     return this.repo.find({
-      where: { userId },
+      where,
       order: { createdAt: 'DESC' },
       take: limit,
     });
   }
 
-  async listUserBetsByTimeRange(userId: string, startTime: Date, endTime: Date, limit: number = DEFAULTS.BET.DEFAULT_LIMIT): Promise<Bet[]> {
+  async listUserBetsByTimeRange(userId: string, startTime: Date, endTime: Date, gameCode?: string, limit: number = DEFAULTS.BET.DEFAULT_LIMIT): Promise<Bet[]> {
+    const where: FindOptionsWhere<Bet> = { 
+      userId, 
+      createdAt: Between(startTime, endTime),
+    };
+    if (gameCode) {
+      where.gameCode = gameCode;
+    }
     return this.repo.find({
-      where: { userId, createdAt: Between(startTime, endTime) },
+      where,
       order: { createdAt: 'DESC' },
       take: limit,
     });
   }
 
-  async listByRound(roundId: string): Promise<Bet[]> {
-    return this.repo.find({ where: { roundId } });
+  async listByRound(gameCode: string, roundId: string): Promise<Bet[]> {
+    return this.repo.find({ where: { gameCode, roundId } });
   }
 
   async deletePlacedBets(): Promise<number> {

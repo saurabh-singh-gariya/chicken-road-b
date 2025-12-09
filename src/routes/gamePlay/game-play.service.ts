@@ -2,14 +2,18 @@ import { Injectable, Logger } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { v4 as uuidv4 } from 'uuid';
+
 import { Difficulty as BetDifficulty } from '../../entities/bet.entity';
+import { BetPayloadDto, Difficulty } from './DTO/bet-payload.dto';
+
 import { BetService } from '../../modules/bet/bet.service';
 import { FairnessService } from '../../modules/fairness/fairness.service';
 import { GameConfigService } from '../../modules/gameConfig/game-config.service';
 import { HazardSchedulerService } from '../../modules/hazard/hazard-scheduler.service';
 import { RedisService } from '../../modules/redis/redis.service';
+import { GameService } from '../../modules/games/game.service';
 import { SingleWalletFunctionsService } from '../single-wallet-functions/single-wallet-functions.service';
-import { BetPayloadDto, Difficulty } from './DTO/bet-payload.dto';
+
 import { DEFAULTS } from '../../config/defaults.config';
 
 interface GameSession {
@@ -31,6 +35,7 @@ interface GameSession {
   collisionColumns?: number[];
   platformBetTxId: string;
   roundId: string;
+  gameCode: string;
 }
 
 export interface BetStepResponse {
@@ -90,12 +95,13 @@ export class GamePlayService {
     private readonly betService: BetService,
     private readonly hazardSchedulerService: HazardSchedulerService,
     private readonly fairnessService: FairnessService,
+    private readonly gameService: GameService,
   ) { }
 
   async performBetFlow(
     userId: string,
     agentId: string,
-    gameMode: string,
+    gameCode: string,
     incoming: any,
   ): Promise<BetStepResponse | { error: string; details?: any[] }> {
 
@@ -111,7 +117,7 @@ export class GamePlayService {
     }
 
     try {
-      const redisKey = `gameSession:${userId}-${agentId}`;
+      const redisKey = this.getRedisKey(userId, agentId, gameCode);
       const existingSession: GameSession =
         await this.redisService.get<any>(redisKey);
 
@@ -150,7 +156,7 @@ export class GamePlayService {
       `[BET_PLACED] user=${userId} agent=${agentId} amount=${betAmountStr} currency=${currencyUC} difficulty=${difficultyUC} roundId=${roundId} txId=${platformTxId}`,
     );
 
-    const gamePayloads = await this.gameConfigService.getChickenRoadGamePayloads();
+    const gamePayloads = await this.gameService.getGamePayloads(gameCode);
 
     this.logger.debug(
       `Calling wallet API placeBet: user=${userId} agent=${agentId} amount=${betNumber} roundId=${roundId}`,
@@ -164,8 +170,6 @@ export class GamePlayService {
       currencyUC,
       gamePayloads,
     );
-
-    // Wallet API response already logged in single-wallet-functions.service
 
     if (agentResult.status !== '0000') {
       this.logger.error(
@@ -194,10 +198,7 @@ export class GamePlayService {
       difficulty: dto.difficulty as BetDifficulty,
       betAmount: betAmountStr,
       currency: currencyUC,
-      platform: gamePayloads.platform,
-      gameType: gamePayloads.gameType,
       gameCode: gamePayloads.gameCode,
-      gameName: gamePayloads.gameName,
       isPremium: false,
       betPlacedAt: balanceTs ? new Date(balanceTs) : undefined,
       balanceAfterBet: balance ? String(balance) : undefined,
@@ -205,7 +206,7 @@ export class GamePlayService {
       operatorId: agentId,
     });
 
-    const cfgPayload = await this.getGameConfigPayload();
+    const cfgPayload = await this.getGameConfigPayload(gameCode);
     const coefficients = cfgPayload.coefficients || {};
     const coeffArray: string[] = coefficients[difficultyUC] || [];
 
@@ -244,11 +245,12 @@ export class GamePlayService {
       serverSeed: fairnessData.serverSeed,
       hashedServerSeed: fairnessData.hashedServerSeed,
       nonce: fairnessData.nonce,
+      gameCode,
     };
     this.logger.debug(
       `Creating game session in Redis: user=${userId} agent=${agentId} key=${redisKey} step=${session.currentStep}`,
     );
-    const sessionTTL = await this.redisService.getSessionTTL();
+    const sessionTTL = await this.redisService.getSessionTTL(gameCode);
     await this.redisService.set(redisKey, session, sessionTTL);
 
     const resp: BetStepResponse = {
@@ -273,10 +275,10 @@ export class GamePlayService {
   async performStepFlow(
     userId: string,
     agentId: string,
+    gameCode: string,
     lineNumber: number,
   ): Promise<BetStepResponse | { error: string }> {
-    const redisKey = `gameSession:${userId}-${agentId}`;
-
+    const redisKey = this.getRedisKey(userId, agentId, gameCode);
     this.logger.debug(
       `Step flow initiated: user=${userId} agent=${agentId} lineNumber=${lineNumber} key=${redisKey}`,
     );
@@ -337,6 +339,7 @@ export class GamePlayService {
     } else {
       // Get active hazard columns from scheduler
       hazardColumns = await this.hazardSchedulerService.getActiveHazards(
+        gameCode,
         gameSession.difficulty,
       );
 
@@ -379,10 +382,10 @@ export class GamePlayService {
       return { error: ERROR_MESSAGES.NO_ACTIVE_SESSION };
     }
 
-    const sessionTTL = await this.redisService.getSessionTTL();
+    const sessionTTL = await this.redisService.getSessionTTL(gameCode);
     await this.redisService.set(redisKey, gameSession, sessionTTL);
 
-    const gamePayloads = await this.gameConfigService.getChickenRoadGamePayloads();
+    const gamePayloads = await this.gameService.getGamePayloads(gameCode);
 
     let settlementAmount = 0;
     if (endReason === 'hazard') {
@@ -479,8 +482,9 @@ export class GamePlayService {
   async performCashOutFlow(
     userId: string,
     agentId: string,
+    gameCode: string,
   ): Promise<BetStepResponse | { error: string }> {
-    const redisKey = `gameSession:${userId}-${agentId}`;
+    const redisKey = this.getRedisKey(userId, agentId, gameCode);
 
     this.logger.debug(
       `Cashout flow initiated: user=${userId} agent=${agentId} key=${redisKey}`,
@@ -503,7 +507,7 @@ export class GamePlayService {
         ? Number(gameSession.coefficients[gameSession.currentStep])
         : 0;
 
-    const sessionTTL = await this.redisService.getSessionTTL();
+    const sessionTTL = await this.redisService.getSessionTTL(gameCode);
     await this.redisService.set(redisKey, gameSession, sessionTTL);
 
     const settlementAmount = gameSession.winAmount;
@@ -512,7 +516,7 @@ export class GamePlayService {
       `[CASHOUT] user=${userId} agent=${agentId} step=${gameSession.currentStep} multiplier=${currentMultiplier} winAmount=${settlementAmount} txId=${gameSession.platformBetTxId}`,
     );
 
-    const gamePayloads = await this.gameConfigService.getChickenRoadGamePayloads();
+    const gamePayloads = await this.gameService.getGamePayloads(gameCode);
 
     try {
         // Wallet API call logging handled in single-wallet-functions.service
@@ -553,7 +557,6 @@ export class GamePlayService {
       await this.betService.recordSettlement({
         externalPlatformTxId: gameSession.platformBetTxId,
         winAmount: settlementAmount.toFixed(GAME_CONSTANTS.DECIMAL_PLACES),
-        settleType: 'cashout',
         settledAt: new Date(),
         balanceAfterSettlement: settleResult.balance
           ? String(settleResult.balance)
@@ -587,6 +590,7 @@ export class GamePlayService {
     }
 
     let hazardColumns = await this.hazardSchedulerService.getActiveHazards(
+        gameCode,
         gameSession.difficulty,
       );
 
@@ -607,8 +611,9 @@ export class GamePlayService {
   async performGetSessionFlow(
     userId: string,
     agentId: string,
+    gameCode: string,
   ): Promise<BetStepResponse | { error: string }> {
-    const redisKey = `gameSession:${userId}-${agentId}`;
+    const redisKey = this.getRedisKey(userId, agentId, gameCode);
     const gameSession: GameSession = await this.redisService.get<any>(redisKey);
 
     if (!gameSession) {
@@ -648,8 +653,9 @@ export class GamePlayService {
   async performGetGameStateFlow(
     userId: string,
     agentId: string,
+    gameCode: string,
   ): Promise<BetStepResponse | null> {
-    const redisKey = `gameSession:${userId}-${agentId}`;
+    const redisKey = this.getRedisKey(userId, agentId, gameCode);
     const gameSession: GameSession = await this.redisService.get<any>(redisKey);
 
     if (!gameSession) {
@@ -773,9 +779,10 @@ export class GamePlayService {
     }
   }
 
-  private async safeGetConfig(key: string): Promise<string> {
+  private async safeGetConfig(gameCode: string, key: string): Promise<string> {
     try {
-      const raw = await this.gameConfigService.getConfig(key);
+      //TODO: Add support for multiple games
+      const raw = await this.gameConfigService.getConfig(gameCode, key);
       return typeof raw === 'string' ? raw : JSON.stringify(raw);
     } catch (e) {
       this.logger.warn(`Config key ${key} not available: ${e}`);
@@ -971,10 +978,10 @@ export class GamePlayService {
     };
   }
 
-  async getGameConfigPayload(): Promise<GameConfigPayload> {
+  async getGameConfigPayload(gameCode: string): Promise<GameConfigPayload> {
     try {
-      const betConfigRaw = await this.safeGetConfig('betConfig');
-      const coeffRaw = await this.safeGetConfig('coefficients');
+      const betConfigRaw = await this.safeGetConfig(gameCode, 'betConfig');
+      const coeffRaw = await this.safeGetConfig(gameCode, 'coefficients');
       const betConfig = this.tryParseJson(betConfigRaw) || {};
       const coefficients = this.tryParseJson(coeffRaw) || {};
       let newBetConfig = betConfig;
@@ -1106,6 +1113,7 @@ export class GamePlayService {
   async getMyBetsHistory(
     userId: string,
     agentId: string,
+    gameCode?: string,
   ): Promise<any[]> {
     this.logger.debug(
       `Fetching bet history: user=${userId} agent=${agentId}`,
@@ -1113,7 +1121,7 @@ export class GamePlayService {
 
     const lastWeek = new Date(Date.now() - DEFAULTS.GAME.BET_HISTORY_DAYS * 24 * 60 * 60 * 1000);  
 
-    const bets = await this.betService.listUserBetsByTimeRange(userId, lastWeek, new Date(), DEFAULTS.GAME.BET_HISTORY_LIMIT);
+    const bets = await this.betService.listUserBetsByTimeRange(userId, lastWeek, new Date(), gameCode, DEFAULTS.GAME.BET_HISTORY_LIMIT);
 
     return bets.map((bet) => {
       const betAmount = parseFloat(bet.betAmount || '0');
@@ -1154,10 +1162,10 @@ export class GamePlayService {
     });
   }
 
-  /**
-   * TEMPORARY: Clear all Redis data and delete all PLACED bets
-   * Used for cleanup on WebSocket disconnect during development
-   */
+  private getRedisKey(userId: string, agentId: string, gameCode: string): string {
+    return `gameSession:${userId}-${agentId}-${gameCode}`;
+  }
+
   async cleanupOnDisconnect(): Promise<void> {
     try {
       this.logger.warn('[cleanupOnDisconnect] Clearing all Redis data...');

@@ -32,6 +32,8 @@ export const ERROR_CODES = {
   HTTP_STATUS_ERROR: '1041',
   /** Required parameters are missing from request */
   PARAMETER_MISSING: '1056',
+  /** Game not found */
+  GAME_NOT_FOUND: '1057',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

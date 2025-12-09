@@ -5,8 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, Repository } from 'typeorm';
+import { FindOptionsWhere, In, Repository } from 'typeorm';
 import { Agents } from '../../entities/agents.entity';
+import { GameService } from '../games/game.service';
 
 export interface CreateAgentParams {
   agentId: string;
@@ -36,7 +37,8 @@ export class AgentsService {
 
   constructor(
     @InjectRepository(Agents) private readonly repo: Repository<Agents>,
-  ) {}
+    private readonly gameService: GameService,
+  ) { }
 
   private whereById(agentId: string): FindOptionsWhere<Agents> {
     return { agentId };
@@ -144,5 +146,45 @@ export class AgentsService {
 
   async findByCallbackURL(callbackURL: string): Promise<Agents[]> {
     return this.repo.find({ where: { callbackURL } });
+  }
+
+  /**
+   * Check if agent has access to a specific game
+   * If allowedGameCodes is null or empty, agent has access to all games (backward compatibility)
+   * @param agentId Agent ID
+   * @param gameCode Game code to check
+   * @returns true if agent has access, false otherwise
+   */
+  async hasGameAccess(agentId: string, gameCode: string): Promise<boolean> {
+    const agent = await this.findOne(agentId);
+    if (!agent) {
+      return false;
+    }
+    
+    // If allowedGameCodes is null or empty, agent has access to all games
+    if (!agent.allowedGameCodes || agent.allowedGameCodes.length === 0) {
+      return true;
+    }
+    
+    // Otherwise, check if gameCode is in the allowed list
+    return agent.allowedGameCodes.includes(gameCode);
+  }
+
+  async addGameAccess(agentId: string, gameCode: string): Promise<Agents> {
+    //check if the gameCode is valid
+    const game = await this.gameService.getGame(gameCode);
+    if (!game) {
+      throw new NotFoundException(`Game with code ${gameCode} not found`);
+    }
+    const agent = await this.findOne(agentId);
+    if (!agent) {
+      throw new NotFoundException(`Agent with id ${agentId} not found`);
+    }
+    agent.allowedGameCodes = [...(agent.allowedGameCodes ?? []), gameCode];
+    return this.repo.save(agent);
+  }
+
+  async findAgentsByGame(gameCode: string): Promise<Agents[]> {
+    return this.repo.find({ where: { allowedGameCodes: In([gameCode]) } });
   }
 }

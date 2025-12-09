@@ -7,6 +7,8 @@ import { UserSessionService } from '../../modules/user-session/user-session.serv
 import { CreateUserParams, UserService } from '../../modules/user/user.service';
 import { CreateMemberBodyDto } from './DTO/create-member.dto';
 import { DEFAULTS } from '../../config/defaults.config';
+import { GameService } from '../../modules/games/game.service';
+import { AgentsService } from '../../modules/agents/agents.service';
 
 @Injectable()
 export class CommonApiFunctionsService {
@@ -17,6 +19,8 @@ export class CommonApiFunctionsService {
     private readonly gameConfigService: GameConfigService,
     private readonly jwtTokenService: JwtTokenService,
     private readonly userSessionService: UserSessionService,
+    private readonly gameService: GameService,
+    private readonly agentsService: AgentsService,
   ) {}
 
   async createMember(
@@ -119,6 +123,7 @@ export class CommonApiFunctionsService {
     agent: Agents,
     userId: string,
     agentId: string,
+    gameCode: string = 'chicken-road-two',
     ipAddress?: string,
   ): Promise<{
     status: string;
@@ -166,26 +171,22 @@ export class CommonApiFunctionsService {
       };
     }
 
-    const host = await this.resolveHost();
+    const host = await this.resolveHost(gameCode);
     this.logger.log(
       `[loginMember] Generating JWT token - userId: ${userId}, agentId: ${agentId}, host: ${host}`,
     );
     const token = await this.jwtTokenService.signUserToken(userId, agentId);
     
-    // Build URL with new format
-    //TODO:"gameMode" should be dynamic based on the gameCode
-    const gameMode = DEFAULTS.GAME.GAME_MODE;
     const lang = existing.language || DEFAULTS.USER.DEFAULT_LANGUAGE;
     const currency = existing.currency || DEFAULTS.CURRENCY.DEFAULT;
     const adaptive = DEFAULTS.USER.DEFAULT_ADAPTIVE;
     
-    const url = `https://${host}/index.html?gameMode=${encodeURIComponent(gameMode)}&operatorId=${encodeURIComponent(agentId)}&lang=${encodeURIComponent(lang)}&currency=${encodeURIComponent(currency)}&adaptive=${encodeURIComponent(adaptive)}&authToken=${encodeURIComponent(token)}`;
+    const url = `https://${host}/index.html?gameMode=${encodeURIComponent(gameCode)}&operatorId=${encodeURIComponent(agentId)}&lang=${encodeURIComponent(lang)}&currency=${encodeURIComponent(currency)}&adaptive=${encodeURIComponent(adaptive)}&authToken=${encodeURIComponent(token)}`;
 
-    // Add user to logged-in sessions
     await this.userSessionService.addSession(userId, agentId);
 
     this.logger.log(
-      `[LOGIN_SUCCESS] user=${userId} agent=${agentId} ip=${ipAddress || 'N/A'} tokenGenerated=true currency=${currency} gameMode=${gameMode}`,
+      `[LOGIN_SUCCESS] user=${userId} agent=${agentId} ip=${ipAddress || 'N/A'} tokenGenerated=true currency=${currency} gameMode=${gameCode}`,
     );
     return { status: ERROR_CODES.SUCCESS, url, extension: [] };
   }
@@ -216,6 +217,7 @@ export class CommonApiFunctionsService {
       'gameType',
       'gameCode',
     ];
+
     for (const f of mandatory) {
       if (!dto[f] || String(dto[f]).trim() === '') {
         this.logger.warn(
@@ -232,8 +234,45 @@ export class CommonApiFunctionsService {
     this.logger.log(
       `[loginAndLaunchGame] Delegating to loginMember - userId: ${dto.userId}, agentId: ${dto.agentId}`,
     );
-    return this.loginMember(agent, dto.userId, dto.agentId);
-  } 
+
+    const game = await this.gameService.getGame(dto.gameCode);
+    if (!game) {
+      this.logger.warn(
+        `[loginAndLaunchGame] Game not found - gameCode: ${dto.gameCode}`,
+      );
+      return {
+        status: ERROR_CODES.GAME_NOT_FOUND,
+        extension: [],
+        desc: 'Game not found',
+      };
+    }
+    
+    if (!game.isActive) {
+      this.logger.warn(
+        `[loginAndLaunchGame] Game is not active - gameCode: ${dto.gameCode}`,
+      );
+      return {
+        status: ERROR_CODES.GAME_NOT_FOUND,
+        extension: [],
+        desc: 'Game is not active',
+      };
+    }
+    
+    // Validate agent has access to this game
+    const hasAccess = await this.agentsService.hasGameAccess(dto.agentId, dto.gameCode);
+    if (!hasAccess) {
+      this.logger.warn(
+        `[loginAndLaunchGame] Agent does not have access to game - agentId: ${dto.agentId}, gameCode: ${dto.gameCode}`,
+      );
+      return {
+        status: ERROR_CODES.UNABLE_TO_PROCEED,
+        extension: [],
+        desc: 'Agent does not have access to this game',
+      };
+    }
+    
+    return this.loginMember(agent, dto.userId, dto.agentId, dto.gameCode);
+  }
 
   async logoutUsers(
     agent: Agents,
@@ -279,10 +318,11 @@ export class CommonApiFunctionsService {
     };
   }
 
-  private async resolveHost(): Promise<string> {
+  private async resolveHost(gameCode: string): Promise<string> {
     const candidateKey = 'frontend.host';
     try {
-      const value = await this.gameConfigService.getConfig(candidateKey);
+      //TODO: Add support for multiple games
+      const value = await this.gameConfigService.getConfig(gameCode, candidateKey);
       if (typeof value === 'string' && value.trim()) {
         this.logger.debug(
           `[resolveHost] Using configured host: ${value.trim()}`,
