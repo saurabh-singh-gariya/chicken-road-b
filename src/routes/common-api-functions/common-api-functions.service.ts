@@ -173,6 +173,7 @@ export class CommonApiFunctionsService {
     const token = await this.jwtTokenService.signUserToken(userId, agentId);
     
     // Build URL with new format
+    //TODO:"gameMode" should be dynamic based on the gameCode
     const gameMode = DEFAULTS.GAME.GAME_MODE;
     const lang = existing.language || DEFAULTS.USER.DEFAULT_LANGUAGE;
     const currency = existing.currency || DEFAULTS.CURRENCY.DEFAULT;
@@ -232,7 +233,7 @@ export class CommonApiFunctionsService {
       `[loginAndLaunchGame] Delegating to loginMember - userId: ${dto.userId}, agentId: ${dto.agentId}`,
     );
     return this.loginMember(agent, dto.userId, dto.agentId);
-  }
+  } 
 
   async logoutUsers(
     agent: Agents,

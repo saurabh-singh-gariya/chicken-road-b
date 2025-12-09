@@ -50,12 +50,10 @@ export class GameApiRoutesService {
       {
         sub: userId,
         agentId: agentId,
-        operator_id: dto.operator,
         currency: dto.currency,
         game_mode: dto.game_mode,
         timestamp: Date.now(),
       },
-      86400, // 24 hours in seconds
     );
 
     // Add user to logged-in sessions

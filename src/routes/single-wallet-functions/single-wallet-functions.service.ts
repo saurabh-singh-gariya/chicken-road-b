@@ -6,16 +6,17 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
+import { v4 as uuidv4 } from 'uuid';
 import { AgentsService } from '../../modules/agents/agents.service';
 import { BetService } from '../../modules/bet/bet.service';
 import { GameConfigService } from '../../modules/gameConfig/game-config.service';
 import {
-  WalletErrorService,
-} from '../../modules/wallet-error/wallet-error.service';
-import {
   WalletApiAction,
   WalletErrorType,
 } from '../../entities/wallet-error.entity';
+import { WalletAuditService } from '../../modules/wallet-audit/wallet-audit.service';
+import { WalletAuditStatus } from '../../entities/wallet-audit.entity';
+import { WalletRetryJobService } from '../../modules/wallet-retry/wallet-retry-job.service';
 import { DEFAULTS } from '../../config/defaults.config';
 
 @Injectable()
@@ -26,8 +27,8 @@ export class SingleWalletFunctionsService {
   constructor(
     private readonly agentsService: AgentsService,
     private readonly http: HttpService,
-    private readonly gameConfigService: GameConfigService,
-    private readonly walletErrorService: WalletErrorService,
+    private readonly walletAuditService: WalletAuditService,
+    private readonly retryJobService: WalletRetryJobService,
     private readonly betService: BetService,
   ) { }
 
@@ -41,54 +42,6 @@ export class SingleWalletFunctionsService {
       cert: agent.cert,
       agentId: agent.agentId,
     };
-  }
-
-  /**
-   * Retry helper for external API calls with exponential backoff
-   * Retries on transient errors (network, timeout, 5xx) but not on business logic errors (4xx)
-   */
-  private async retryWithBackoff<T>(
-    operation: () => Promise<T>,
-    maxRetries: number = 3,
-    baseDelayMs: number = 1000,
-    operationName: string = 'operation',
-  ): Promise<T> {
-    let lastError: any;
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        return await operation();
-      } catch (error: any) {
-        lastError = error;
-        
-        // Don't retry on business logic errors (4xx) or agent rejections
-        if (error.response?.status >= 400 && error.response?.status < 500) {
-          this.logger.debug(
-            `Non-retryable error (${error.response.status}) for ${operationName}, attempt ${attempt + 1}`,
-          );
-          throw error;
-        }
-        
-        // Don't retry on last attempt
-        if (attempt === maxRetries) {
-          break;
-        }
-        
-        // Calculate exponential backoff delay
-        const delayMs = baseDelayMs * Math.pow(2, attempt);
-        this.logger.warn(
-          `Retrying ${operationName} after ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`,
-        );
-        
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
-    
-    // All retries exhausted
-    this.logger.error(
-      `${operationName} failed after ${maxRetries + 1} attempts`,
-    );
-    throw lastError;
   }
 
   // Unified agent response interface
@@ -105,6 +58,107 @@ export class SingleWalletFunctionsService {
     } as const;
   }
 
+  /**
+   * Log audit record (non-blocking, fire-and-forget)
+   * Errors are caught and logged but don't throw to avoid breaking API calls
+   */
+  private logAudit(params: {
+    requestId: string;
+    agentId: string;
+    userId: string;
+    apiAction: WalletApiAction;
+    status: WalletAuditStatus;
+    requestPayload?: any;
+    requestUrl?: string;
+    responseData?: any;
+    httpStatus?: number;
+    responseTime?: number;
+    failureType?: WalletErrorType;
+    errorMessage?: string;
+    errorStack?: string;
+    platformTxId?: string;
+    roundId?: string;
+    betAmount?: number | string;
+    winAmount?: number | string;
+    currency?: string;
+    callbackUrl?: string;
+    rawError?: string;
+  }): void {
+    // Wrap in try-catch to handle any synchronous errors
+    try {
+      const auditPromise = this.walletAuditService.logAudit(params);
+      if (auditPromise && typeof auditPromise.catch === 'function') {
+        auditPromise.catch((err: any) => {
+          // Double-wrap to ensure we never throw
+          try {
+            this.logger.error(
+              `Failed to log wallet audit (non-blocking): ${err?.message || 'Unknown error'}`,
+              err?.stack,
+            );
+          } catch (logError) {
+            // If even logging fails, silently fail - never crash the app
+            console.error('Critical: Failed to log audit error', logError);
+          }
+        });
+      }
+    } catch (syncError: any) {
+      // Handle any synchronous errors (e.g., if walletAuditService is undefined)
+      try {
+        this.logger.error(
+          `Failed to initiate wallet audit logging (sync error): ${syncError?.message || 'Unknown error'}`,
+          syncError?.stack,
+        );
+      } catch {
+        // If even logging fails, silently fail
+        console.error('Critical: Failed to log sync audit error', syncError);
+      }
+    }
+  }
+
+  /**
+   * Safely create retry job - never throws, never crashes the app
+   */
+  private createRetryJobSafely(params: {
+    platformTxId: string;
+    apiAction: WalletApiAction;
+    agentId: string;
+    userId: string;
+    requestPayload: any;
+    callbackUrl: string;
+    roundId?: string;
+    betAmount?: number | string;
+    winAmount?: number | string;
+    currency?: string;
+    gamePayloads?: any;
+    walletAuditId?: string;
+    errorMessage?: string;
+  }): void {
+    try {
+      const retryPromise = this.retryJobService.createRetryJob(params);
+      if (retryPromise && typeof retryPromise.catch === 'function') {
+        retryPromise.catch((err: any) => {
+          try {
+            this.logger.error(
+              `Failed to create retry job (non-blocking): ${err?.message || 'Unknown error'}`,
+              err?.stack,
+            );
+          } catch (logError) {
+            console.error('Critical: Failed to log retry job error', logError);
+          }
+        });
+      }
+    } catch (syncError: any) {
+      try {
+        this.logger.error(
+          `Failed to initiate retry job creation (sync error): ${syncError?.message || 'Unknown error'}`,
+          syncError?.stack,
+        );
+      } catch {
+        console.error('Critical: Failed to log sync retry job error', syncError);
+      }
+    }
+  }
+
   async getBalance(
     agentId: string,
     userId: string,
@@ -115,42 +169,62 @@ export class SingleWalletFunctionsService {
     userId: string | null;
     raw: any;
   }> {
+    const requestId = uuidv4();
     const { callbackURL, cert } = await this.resolveAgent(agentId);
     const url = callbackURL;
     const messageObj = { action: 'getBalance', userId };
     const payload = { key: cert, message: JSON.stringify(messageObj) };
-    this.logger.debug(`Calling getBalance url=${url} agent=${agentId}`);
+    const requestStartTime = Date.now();
+    this.logger.debug(`Calling getBalance url=${url} agent=${agentId} requestId=${requestId}`);
     try {
       const resp = await firstValueFrom(this.http.post<any>(url, payload));
+      const responseTime = Date.now() - requestStartTime;
       const mappedResponse = this.mapAgentResponse(resp.data);
       
       // Check if agent rejected the request (status !== '0000' means failure)
       if (mappedResponse.status !== '0000') {
         const errorMessage = `Agent rejected getBalance with status: ${mappedResponse.status}`;
-        try {
-          await this.walletErrorService.createError({
-            agentId,
-            userId,
-            apiAction: WalletApiAction.GET_BALANCE,
-            errorType: WalletErrorType.AGENT_REJECTED,
-            errorMessage,
-            requestPayload: { messageObj, url },
-            responseData: mappedResponse.raw,
-            httpStatus: resp.status,
-            callbackUrl: url,
-          });
-        } catch (logError) {
-          this.logger.error(
-            `Failed to log wallet error to database: ${logError}`,
-          );
-        }
+        
+        // Log to audit (non-blocking)
+        this.logAudit({
+          requestId,
+          agentId,
+          userId,
+          apiAction: WalletApiAction.GET_BALANCE,
+          status: WalletAuditStatus.FAILURE,
+          requestPayload: { messageObj, url },
+          requestUrl: url,
+          responseData: mappedResponse.raw,
+          httpStatus: resp.status,
+          responseTime,
+          failureType: WalletErrorType.AGENT_REJECTED,
+          errorMessage,
+          callbackUrl: url,
+        });
+
         throw new InternalServerErrorException(errorMessage);
       }
       
+      // Log success to audit (non-blocking)
+      this.logAudit({
+        requestId,
+        agentId,
+        userId,
+        apiAction: WalletApiAction.GET_BALANCE,
+        status: WalletAuditStatus.SUCCESS,
+        requestPayload: { messageObj, url },
+        requestUrl: url,
+        responseData: mappedResponse.raw,
+        httpStatus: resp.status,
+        responseTime,
+        callbackUrl: url,
+      });
+      
       return mappedResponse;
     } catch (err: any) {
+      const responseTime = Date.now() - requestStartTime;
       this.logger.error(
-        `getBalance failed agent=${agentId} user=${userId}`,
+        `getBalance failed agent=${agentId} user=${userId} requestId=${requestId}`,
         err,
       );
 
@@ -169,26 +243,24 @@ export class SingleWalletFunctionsService {
         errorType = WalletErrorType.TIMEOUT_ERROR;
       }
 
-      // Log error to database
-      try {
-        await this.walletErrorService.createError({
-          agentId,
-          userId,
-          apiAction: WalletApiAction.GET_BALANCE,
-          errorType,
-          errorMessage: err.message || 'Unknown error',
-          errorStack: err.stack,
-          requestPayload: { messageObj, url },
-          responseData,
-          httpStatus,
-          callbackUrl: url,
-          rawError: JSON.stringify(err),
-        });
-      } catch (logError) {
-        this.logger.error(
-          `Failed to log wallet error to database: ${logError}`,
-        );
-      }
+      // Log to audit (non-blocking)
+      this.logAudit({
+        requestId,
+        agentId,
+        userId,
+        apiAction: WalletApiAction.GET_BALANCE,
+        status: WalletAuditStatus.FAILURE,
+        requestPayload: { messageObj, url },
+        requestUrl: url,
+        responseData,
+        httpStatus,
+        responseTime,
+        failureType: errorType,
+        errorMessage: err.message || 'Unknown error',
+        errorStack: err.stack,
+        callbackUrl: url,
+        rawError: JSON.stringify(err),
+      });
 
       throw err;
     }
@@ -209,6 +281,7 @@ export class SingleWalletFunctionsService {
     userId: string | null;
     raw: any;
   }> {
+    const requestId = uuidv4();
     const { callbackURL, cert } = await this.resolveAgent(agentId);
     const url = callbackURL;
     const betTime = new Date().toISOString();
@@ -229,15 +302,11 @@ export class SingleWalletFunctionsService {
     const payload = { key: cert, message: JSON.stringify(messageObj) };
     const requestStartTime = Date.now();
     this.logger.debug(
-      `[WALLET_API_REQUEST] user=${userId} agent=${agentId} action=placeBet url=${url} amount=${amount} roundId=${roundId} txId=${platformTxId}`,
+      `[WALLET_API_REQUEST] user=${userId} agent=${agentId} action=placeBet url=${url} amount=${amount} roundId=${roundId} txId=${platformTxId} requestId=${requestId}`,
     );
     try {
-      const resp = await this.retryWithBackoff(
-        () => firstValueFrom(this.http.post<any>(url, payload)),
-        3,
-        1000,
-        `placeBet agent=${agentId} user=${userId}`,
-      );
+      
+      const resp = await firstValueFrom(this.http.post<any>(url, payload));
       const responseTime = Date.now() - requestStartTime;
       const mappedResponse = this.mapAgentResponse(resp.data);
       this.logger.log(
@@ -247,34 +316,55 @@ export class SingleWalletFunctionsService {
       // Check if agent rejected the bet (status !== '0000' means failure)
       if (mappedResponse.status !== '0000') {
         const errorMessage = `Agent rejected bet with status: ${mappedResponse.status}`;
-        try {
-          await this.walletErrorService.createError({
-            agentId,
-            userId,
-            apiAction: WalletApiAction.PLACE_BET,
-            errorType: WalletErrorType.AGENT_REJECTED,
-            errorMessage,
-            requestPayload: { messageObj, url },
-            responseData: mappedResponse.raw,
-            httpStatus: resp.status,
-            platformTxId,
-            roundId,
-            betAmount: amount,
-            currency,
-            callbackUrl: url,
-          });
-        } catch (logError) {
-          this.logger.error(
-            `Failed to log wallet error to database: ${logError}`,
-          );
-        }
+        
+        // Log to audit (non-blocking)
+        this.logAudit({
+          requestId,
+          agentId,
+          userId,
+          apiAction: WalletApiAction.PLACE_BET,
+          status: WalletAuditStatus.FAILURE,
+          requestPayload: { messageObj, url },
+          requestUrl: url,
+          responseData: mappedResponse.raw,
+          httpStatus: resp.status,
+          responseTime,
+          failureType: WalletErrorType.AGENT_REJECTED,
+          errorMessage,
+          platformTxId,
+          roundId,
+          betAmount: amount,
+          currency,
+          callbackUrl: url,
+        });
+
         throw new InternalServerErrorException(errorMessage);
       }
       
+      // Log success to audit (non-blocking)
+      this.logAudit({
+        requestId,
+        agentId,
+        userId,
+        apiAction: WalletApiAction.PLACE_BET,
+        status: WalletAuditStatus.SUCCESS,
+        requestPayload: { messageObj, url },
+        requestUrl: url,
+        responseData: mappedResponse.raw,
+        httpStatus: resp.status,
+        responseTime,
+        platformTxId,
+        roundId,
+        betAmount: amount,
+        currency,
+        callbackUrl: url,
+      });
+      
       return mappedResponse;
     } catch (err: any) {
+      const responseTime = Date.now() - requestStartTime;
       this.logger.error(
-        `placeBet failed agent=${agentId} user=${userId}`,
+        `placeBet failed agent=${agentId} user=${userId} requestId=${requestId}`,
         err,
       );
 
@@ -293,30 +383,28 @@ export class SingleWalletFunctionsService {
         errorType = WalletErrorType.TIMEOUT_ERROR;
       }
 
-      // Log error to database
-      try {
-        await this.walletErrorService.createError({
-          agentId,
-          userId,
-          apiAction: WalletApiAction.PLACE_BET,
-          errorType,
-          errorMessage: err.message || 'Unknown error',
-          errorStack: err.stack,
-          requestPayload: { messageObj, url },
-          responseData,
-          httpStatus,
-          platformTxId,
-          roundId,
-          betAmount: amount,
-          currency,
-          callbackUrl: url,
-          rawError: JSON.stringify(err),
-        });
-      } catch (logError) {
-        this.logger.error(
-          `Failed to log wallet error to database: ${logError}`,
-        );
-      }
+      // Log to audit (non-blocking)
+      this.logAudit({
+        requestId,
+        agentId,
+        userId,
+        apiAction: WalletApiAction.PLACE_BET,
+        status: WalletAuditStatus.FAILURE,
+        requestPayload: { messageObj, url },
+        requestUrl: url,
+        responseData,
+        httpStatus,
+        responseTime,
+        failureType: errorType,
+        errorMessage: err.message || 'Unknown error',
+        errorStack: err.stack,
+        platformTxId,
+        roundId,
+        betAmount: amount,
+        currency,
+        callbackUrl: url,
+        rawError: JSON.stringify(err),
+      });
 
       throw err;
     }
@@ -339,6 +427,7 @@ export class SingleWalletFunctionsService {
     userId: string | null;
     raw: any;
   }> {
+    const requestId = uuidv4();
     const { callbackURL, cert } = await this.resolveAgent(agentId);
     const url = callbackURL;
     const txTime = new Date().toISOString();
@@ -364,15 +453,10 @@ export class SingleWalletFunctionsService {
     const payload = { key: cert, message: JSON.stringify(messageObj) };
     const requestStartTime = Date.now();
     this.logger.debug(
-      `[WALLET_API_REQUEST] user=${userId} agent=${agentId} action=settleBet url=${url} txId=${platformTxId} betAmount=${betAmount} winAmount=${winAmount} roundId=${roundId}`,
+      `[WALLET_API_REQUEST] user=${userId} agent=${agentId} action=settleBet url=${url} txId=${platformTxId} betAmount=${betAmount} winAmount=${winAmount} roundId=${roundId} requestId=${requestId}`,
     );
     try {
-      const resp = await this.retryWithBackoff(
-        () => firstValueFrom(this.http.post<any>(url, payload)),
-        3,
-        1000,
-        `settleBet agent=${agentId} txId=${platformTxId}`,
-      );
+      const resp = await firstValueFrom(this.http.post<any>(url, payload));
       const responseTime = Date.now() - requestStartTime;
       const mappedResponse = this.mapAgentResponse(resp.data);
       this.logger.log(
@@ -382,28 +466,50 @@ export class SingleWalletFunctionsService {
       // Check if agent rejected the settlement (status !== '0000' means failure)
       if (mappedResponse.status !== '0000') {
         const errorMessage = `Agent rejected settlement with status: ${mappedResponse.status}`;
-        try {
-          await this.walletErrorService.createError({
+        const currency = gamePayloads.currency || DEFAULTS.CURRENCY.DEFAULT;
+        
+        // Log to audit first (non-blocking)
+        this.walletAuditService.logAudit({
+          requestId,
+          agentId,
+          userId,
+          apiAction: WalletApiAction.SETTLE_BET,
+          status: WalletAuditStatus.FAILURE,
+          requestPayload: { messageObj, url },
+          requestUrl: url,
+          responseData: mappedResponse.raw,
+          httpStatus: resp.status,
+          responseTime,
+          failureType: WalletErrorType.AGENT_REJECTED,
+          errorMessage,
+          platformTxId,
+          roundId,
+          betAmount,
+          winAmount,
+          currency,
+          callbackUrl: url,
+        }).then(async (auditRecord) => {
+          // Create retry job (non-blocking)
+          this.createRetryJobSafely({
+            platformTxId,
+            apiAction: WalletApiAction.SETTLE_BET,
             agentId,
             userId,
-            apiAction: WalletApiAction.SETTLE_BET,
-            errorType: WalletErrorType.AGENT_REJECTED,
-            errorMessage,
-            requestPayload: { messageObj, url },
-            responseData: mappedResponse.raw,
-            httpStatus: resp.status,
-            platformTxId,
+            requestPayload: { messageObj, url, payload },
+            callbackUrl: url,
             roundId,
             betAmount,
             winAmount,
-            currency: gamePayloads.currency || DEFAULTS.CURRENCY.DEFAULT,
-            callbackUrl: url,
+            currency,
+            gamePayloads,
+            walletAuditId: auditRecord?.id,
+            errorMessage,
           });
-        } catch (logError) {
+        }).catch((auditError) => {
           this.logger.error(
-            `Failed to log wallet error to database: ${logError}`,
+            `Failed to log audit for settleBet: ${auditError?.message || 'Unknown error'}`,
           );
-        }
+        });
 
         // Mark bet as settlement failed when agent rejects
         try {
@@ -420,9 +526,30 @@ export class SingleWalletFunctionsService {
         throw new InternalServerErrorException(errorMessage);
       }
       
+      // Log success to audit (non-blocking)
+      this.logAudit({
+        requestId,
+        agentId,
+        userId,
+        apiAction: WalletApiAction.SETTLE_BET,
+        status: WalletAuditStatus.SUCCESS,
+        requestPayload: { messageObj, url },
+        requestUrl: url,
+        responseData: mappedResponse.raw,
+        httpStatus: resp.status,
+        responseTime,
+        platformTxId,
+        roundId,
+        betAmount,
+        winAmount,
+        currency: gamePayloads.currency || DEFAULTS.CURRENCY.DEFAULT,
+        callbackUrl: url,
+      });
+      
       return mappedResponse;
     } catch (err: any) {
       const responseTime = Date.now() - requestStartTime;
+      const currency = gamePayloads.currency || DEFAULTS.CURRENCY.DEFAULT;
       
       // Determine error type
       let errorType = WalletErrorType.UNKNOWN_ERROR;
@@ -447,35 +574,54 @@ export class SingleWalletFunctionsService {
         ? 'TIMEOUT_ERROR'
         : 'UNKNOWN_ERROR';
       this.logger.error(
-        `[WALLET_API_ERROR] user=${userId} agent=${agentId} action=settleBet txId=${platformTxId} errorType=${errorTypeStr} httpStatus=${httpStatus || 'N/A'} responseTime=${responseTime}ms error=${err.message}`,
+        `[WALLET_API_ERROR] user=${userId} agent=${agentId} action=settleBet txId=${platformTxId} errorType=${errorTypeStr} httpStatus=${httpStatus || 'N/A'} responseTime=${responseTime}ms error=${err.message} requestId=${requestId}`,
         err.stack,
       );
 
-      // Log error to database
-      try {
-        await this.walletErrorService.createError({
+      // Log to audit first (non-blocking), then create retry job
+      this.walletAuditService.logAudit({
+        requestId,
+        agentId,
+        userId,
+        apiAction: WalletApiAction.SETTLE_BET,
+        status: WalletAuditStatus.FAILURE,
+        requestPayload: { messageObj, url },
+        requestUrl: url,
+        responseData,
+        httpStatus,
+        responseTime,
+        failureType: errorType,
+        errorMessage: err.message || 'Unknown error',
+        errorStack: err.stack,
+        platformTxId,
+        roundId,
+        betAmount,
+        winAmount,
+        currency,
+        callbackUrl: url,
+        rawError: JSON.stringify(err),
+      }).then(async (auditRecord) => {
+        // Create retry job (non-blocking)
+        this.createRetryJobSafely({
+          platformTxId,
+          apiAction: WalletApiAction.SETTLE_BET,
           agentId,
           userId,
-          apiAction: WalletApiAction.SETTLE_BET,
-          errorType,
-          errorMessage: err.message || 'Unknown error',
-          errorStack: err.stack,
-          requestPayload: { messageObj, url },
-          responseData,
-          httpStatus,
-          platformTxId,
+          requestPayload: { messageObj, url, payload },
+          callbackUrl: url,
           roundId,
           betAmount,
           winAmount,
-          currency: gamePayloads.currency || DEFAULTS.CURRENCY.DEFAULT,
-          callbackUrl: url,
-          rawError: JSON.stringify(err),
+          currency,
+          gamePayloads,
+          walletAuditId: auditRecord?.id,
+          errorMessage: err.message || 'Unknown error',
         });
-      } catch (logError) {
+      }).catch((auditError) => {
         this.logger.error(
-          `Failed to log wallet error to database: ${logError}`,
+          `Failed to log audit for settleBet: ${auditError?.message || 'Unknown error'}`,
         );
-      }
+      });
 
       // Mark bet as settlement failed after all retries exhausted
       try {
@@ -523,9 +669,11 @@ export class SingleWalletFunctionsService {
     userId: string | null;
     raw: any;
   }> {
+    const requestId = uuidv4();
     const { callbackURL, cert } = await this.resolveAgent(agentId);
     const url = callbackURL;
     const currency = refundTransactions[0]?.gamePayloads?.currency || DEFAULTS.CURRENCY.DEFAULT;
+    const firstTransaction = refundTransactions[0];
 
     // Build transaction array from refund transactions
     const txns = refundTransactions.map((refundTxn) => {
@@ -561,15 +709,10 @@ export class SingleWalletFunctionsService {
     const requestStartTime = Date.now();
     const txIds = txns.map(t => t.platformTxId).join(',');
     this.logger.debug(
-      `[WALLET_API_REQUEST] user=${userId} agent=${agentId} action=refundBet url=${url} txCount=${txns.length} txIds=[${txIds}]`,
+      `[WALLET_API_REQUEST] user=${userId} agent=${agentId} action=refundBet url=${url} txCount=${txns.length} txIds=[${txIds}] requestId=${requestId}`,
     );
     try {
-      const resp = await this.retryWithBackoff(
-        () => firstValueFrom(this.http.post<any>(url, payload)),
-        3,
-        1000,
-        `refundBet agent=${agentId} user=${userId}`,
-      );
+      const resp = await firstValueFrom(this.http.post<any>(url, payload));
       const responseTime = Date.now() - requestStartTime;
       const mappedResponse = this.mapAgentResponse(resp.data);
       this.logger.log(
@@ -579,28 +722,53 @@ export class SingleWalletFunctionsService {
       // Check if agent rejected the refund (status !== '0000' means failure)
       if (mappedResponse.status !== '0000') {
         const errorMessage = `Agent rejected refund with status: ${mappedResponse.status}`;
-        try {
-          await this.walletErrorService.createError({
-            agentId,
-            userId,
-            apiAction: WalletApiAction.REFUND_BET,
-            errorType: WalletErrorType.AGENT_REJECTED,
-            errorMessage,
-            requestPayload: { messageObj, url },
-            responseData: mappedResponse.raw,
-            httpStatus: resp.status,
-            platformTxId: refundTransactions[0]?.platformTxId,
-            roundId: refundTransactions[0]?.roundId,
-            betAmount: refundTransactions.reduce((sum, txn) => sum + txn.betAmount, 0),
-            winAmount: refundTransactions.reduce((sum, txn) => sum + txn.winAmount, 0),
-            currency,
-            callbackUrl: url,
-          });
-        } catch (logError) {
+        const totalBetAmount = refundTransactions.reduce((sum, txn) => sum + txn.betAmount, 0);
+        const totalWinAmount = refundTransactions.reduce((sum, txn) => sum + txn.winAmount, 0);
+        
+        // Log to audit first (non-blocking)
+        this.walletAuditService.logAudit({
+          requestId,
+          agentId,
+          userId,
+          apiAction: WalletApiAction.REFUND_BET,
+          status: WalletAuditStatus.FAILURE,
+          requestPayload: { messageObj, url },
+          requestUrl: url,
+          responseData: mappedResponse.raw,
+          httpStatus: resp.status,
+          responseTime,
+          failureType: WalletErrorType.AGENT_REJECTED,
+          errorMessage,
+          platformTxId: firstTransaction?.platformTxId,
+          roundId: firstTransaction?.roundId,
+          betAmount: totalBetAmount,
+          winAmount: totalWinAmount,
+          currency,
+          callbackUrl: url,
+        }).then(async (auditRecord) => {
+          // Create retry job for first transaction (non-blocking)
+          if (firstTransaction) {
+            this.createRetryJobSafely({
+              platformTxId: firstTransaction.platformTxId,
+              apiAction: WalletApiAction.REFUND_BET,
+              agentId,
+              userId,
+              requestPayload: { messageObj, url, payload, refundTransactions },
+              callbackUrl: url,
+              roundId: firstTransaction.roundId,
+              betAmount: totalBetAmount,
+              winAmount: totalWinAmount,
+              currency,
+              gamePayloads: firstTransaction.gamePayloads,
+              walletAuditId: auditRecord?.id,
+              errorMessage,
+            });
+          }
+        }).catch((auditError) => {
           this.logger.error(
-            `Failed to log wallet error to database: ${logError}`,
+            `Failed to log audit for refundBet: ${auditError?.message || 'Unknown error'}`,
           );
-        }
+        });
 
         // Mark all affected bets as settlement failed when agent rejects
         try {
@@ -625,10 +793,35 @@ export class SingleWalletFunctionsService {
         throw new InternalServerErrorException(errorMessage);
       }
       
+      // Log success to audit (non-blocking)
+      const totalBetAmount = refundTransactions.reduce((sum, txn) => sum + txn.betAmount, 0);
+      const totalWinAmount = refundTransactions.reduce((sum, txn) => sum + txn.winAmount, 0);
+      this.logAudit({
+        requestId,
+        agentId,
+        userId,
+        apiAction: WalletApiAction.REFUND_BET,
+        status: WalletAuditStatus.SUCCESS,
+        requestPayload: { messageObj, url },
+        requestUrl: url,
+        responseData: mappedResponse.raw,
+        httpStatus: resp.status,
+        responseTime,
+        platformTxId: firstTransaction?.platformTxId,
+        roundId: firstTransaction?.roundId,
+        betAmount: totalBetAmount,
+        winAmount: totalWinAmount,
+        currency,
+        callbackUrl: url,
+      });
+      
       return mappedResponse;
     } catch (err: any) {
+      const responseTime = Date.now() - requestStartTime;
+      const totalBetAmount = refundTransactions.reduce((sum, txn) => sum + txn.betAmount, 0);
+      const totalWinAmount = refundTransactions.reduce((sum, txn) => sum + txn.winAmount, 0);
       this.logger.error(
-        `refundBet failed agent=${agentId} user=${userId}`,
+        `refundBet failed agent=${agentId} user=${userId} requestId=${requestId}`,
         err,
       );
 
@@ -647,31 +840,52 @@ export class SingleWalletFunctionsService {
         errorType = WalletErrorType.TIMEOUT_ERROR;
       }
 
-      // Log error to database
-      try {
-        await this.walletErrorService.createError({
-          agentId,
-          userId,
-          apiAction: WalletApiAction.REFUND_BET,
-          errorType,
-          errorMessage: err.message || 'Unknown error',
-          errorStack: err.stack,
-          requestPayload: { messageObj, url },
-          responseData,
-          httpStatus,
-          platformTxId: refundTransactions[0]?.platformTxId,
-          roundId: refundTransactions[0]?.roundId,
-          betAmount: refundTransactions.reduce((sum, txn) => sum + txn.betAmount, 0),
-          winAmount: refundTransactions.reduce((sum, txn) => sum + txn.winAmount, 0),
-          currency,
-          callbackUrl: url,
-          rawError: JSON.stringify(err),
-        });
-      } catch (logError) {
+      // Log to audit first (non-blocking), then create retry job
+      this.walletAuditService.logAudit({
+        requestId,
+        agentId,
+        userId,
+        apiAction: WalletApiAction.REFUND_BET,
+        status: WalletAuditStatus.FAILURE,
+        requestPayload: { messageObj, url },
+        requestUrl: url,
+        responseData,
+        httpStatus,
+        responseTime,
+        failureType: errorType,
+        errorMessage: err.message || 'Unknown error',
+        errorStack: err.stack,
+        platformTxId: firstTransaction?.platformTxId,
+        roundId: firstTransaction?.roundId,
+        betAmount: totalBetAmount,
+        winAmount: totalWinAmount,
+        currency,
+        callbackUrl: url,
+        rawError: JSON.stringify(err),
+      }).then(async (auditRecord) => {
+        // Create retry job for first transaction (non-blocking)
+        if (firstTransaction) {
+          this.createRetryJobSafely({
+            platformTxId: firstTransaction.platformTxId,
+            apiAction: WalletApiAction.REFUND_BET,
+            agentId,
+            userId,
+            requestPayload: { messageObj, url, payload, refundTransactions },
+            callbackUrl: url,
+            roundId: firstTransaction.roundId,
+            betAmount: totalBetAmount,
+            winAmount: totalWinAmount,
+            currency,
+            gamePayloads: firstTransaction.gamePayloads,
+            walletAuditId: auditRecord?.id,
+            errorMessage: err.message || 'Unknown error',
+          });
+        }
+      }).catch((auditError) => {
         this.logger.error(
-          `Failed to log wallet error to database: ${logError}`,
+          `Failed to log audit for refundBet: ${auditError?.message || 'Unknown error'}`,
         );
-      }
+      });
 
       // Mark all affected bets as settlement failed after all retries exhausted
       try {
