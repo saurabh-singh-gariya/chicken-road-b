@@ -34,4 +34,9 @@ export class GameApiRoutesController {
     const token = authorization.substring(7);
     return this.service.getOnlineCounter(token);
   }
+
+  @Get('games')
+  async getActiveGames(): Promise<Array<{ gameCode: string; gameName: string; isActive: boolean }>> {
+    return this.service.getActiveGames();
+  }
 }

@@ -183,7 +183,7 @@ export class CommonApiFunctionsService {
     
     const url = `https://${host}/index.html?gameMode=${encodeURIComponent(gameCode)}&operatorId=${encodeURIComponent(agentId)}&lang=${encodeURIComponent(lang)}&currency=${encodeURIComponent(currency)}&adaptive=${encodeURIComponent(adaptive)}&authToken=${encodeURIComponent(token)}`;
 
-    await this.userSessionService.addSession(userId, agentId);
+    await this.userSessionService.addSession(userId, agentId, gameCode);
 
     this.logger.log(
       `[LOGIN_SUCCESS] user=${userId} agent=${agentId} ip=${ipAddress || 'N/A'} tokenGenerated=true currency=${currency} gameMode=${gameCode}`,

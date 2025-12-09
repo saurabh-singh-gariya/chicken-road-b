@@ -29,7 +29,7 @@ export class GameService {
     }
 
     async getActiveGames(): Promise<Game[]> {
-        const games = await this.gameRepository.find()
+        const games = await this.gameRepository.find({ where: { isActive: true } })
         return games
     }
 

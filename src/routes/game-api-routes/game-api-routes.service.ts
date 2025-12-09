@@ -1,6 +1,7 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtTokenService } from '../../modules/jwt/jwt-token.service';
 import { UserSessionService } from '../../modules/user-session/user-session.service';
+import { GameService } from '../../modules/games/game.service';
 import { AuthLoginDto, AuthLoginResponse } from './DTO/auth-login.dto';
 import { OnlineCounterResponse } from './DTO/online-counter.dto';
 
@@ -11,6 +12,7 @@ export class GameApiRoutesService {
   constructor(
     private readonly jwtTokenService: JwtTokenService,
     private readonly userSessionService: UserSessionService,
+    private readonly gameService: GameService,
   ) {}
 
   async authenticateGame(dto: AuthLoginDto): Promise<AuthLoginResponse> {
@@ -57,7 +59,8 @@ export class GameApiRoutesService {
     );
 
     // Add user to logged-in sessions
-    await this.userSessionService.addSession(userId, agentId);
+    // Note: game_mode from DTO is the gameCode
+    await this.userSessionService.addSession(userId, agentId, dto.game_mode);
 
     this.logger.log(
       `[TOKEN_VERIFIED] user=${userId} agent=${agentId} operator=${dto.operator} currency=${dto.currency} gameMode=${dto.game_mode} tokenGenerated=true`,
@@ -199,5 +202,17 @@ export class GameApiRoutesService {
         }
       }
     }
+  }
+
+  async getActiveGames(): Promise<Array<{ gameCode: string; gameName: string; isActive: boolean }>> {
+    this.logger.log(`[getActiveGames] Request received`);
+    const games = await this.gameService.getActiveGames();
+    return games
+      .filter(game => game.isActive)
+      .map(game => ({
+        gameCode: game.gameCode,
+        gameName: game.gameName,
+        isActive: game.isActive,
+      }));
   }
 }
