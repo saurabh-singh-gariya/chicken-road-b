@@ -23,9 +23,9 @@ export class RedisService {
     return this.redisClient;
   }
 
-  async set(key: string, value: any, ttl?: number): Promise<void> {
+  async set(key: string, value: any, ttl?: number, gameCode: string = 'chicken-road-two'): Promise<void> {
     try {
-      const effectiveTTL = ttl ?? (await this.getDefaultTTL());
+      const effectiveTTL = ttl ?? (await this.getDefaultTTL(gameCode));
       await this.redisClient.set(
         key,
         JSON.stringify(value),
@@ -69,13 +69,14 @@ export class RedisService {
     }
   }
 
-  private async getDefaultTTL(): Promise<number> {
+  private async getDefaultTTL(gameCode: string): Promise<number> {
     if (this.configuredTTL !== undefined) {
       return this.configuredTTL;
     }
 
     try {
       const ttlValue = await this.gameConfigService.getConfig(
+        gameCode,
         REDIS_CONSTANTS.CONFIG_KEY,
       );
       const parsed = Number(ttlValue);
@@ -92,9 +93,11 @@ export class RedisService {
     return REDIS_CONSTANTS.DEFAULT_TTL;
   }
 
-  async getSessionTTL(): Promise<number> {
+  async getSessionTTL(gameCode: string): Promise<number> {
     try {
+      //TODO: Add support for multiple games
       const ttlValue = await this.gameConfigService.getConfig(
+        gameCode,
         DEFAULTS.REDIS.SESSION_TTL_CONFIG_KEY,
       );
       const parsed = Number(ttlValue);

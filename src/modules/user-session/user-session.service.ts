@@ -8,10 +8,10 @@ export class UserSessionService {
 
   constructor(private readonly redisService: RedisService) {}
 
-  async addSession(userId: string, agentId: string): Promise<void> {
+  async addSession(userId: string, agentId: string, gameCode: string = 'chicken-road-two'): Promise<void> {
     const sessionId = `${userId}:${agentId}`;
     const client = this.redisService.getClient();
-    const ttl = await this.redisService.getSessionTTL();
+    const ttl = await this.redisService.getSessionTTL(gameCode);
     
     const added = await client.sadd(this.SESSION_KEY, sessionId);
     await client.expire(this.SESSION_KEY, ttl);

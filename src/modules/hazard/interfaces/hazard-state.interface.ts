@@ -1,10 +1,11 @@
 import { Difficulty } from '../../../routes/gamePlay/DTO/bet-payload.dto';
 
 /**
- * Represents the current hazard state for a difficulty level
+ * Represents the current hazard state for a game and difficulty level
  * Includes current active pattern, next scheduled pattern, and rotation timing
  */
 export interface HazardState {
+  gameCode: string; // Game identifier
   difficulty: Difficulty;
   current: number[]; // Active hazard column indices
   next: number[]; // Next pattern (becomes current after changeAt)

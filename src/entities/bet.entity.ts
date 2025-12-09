@@ -67,9 +67,6 @@ export class Bet {
   @Column({ nullable: true })
   settlementRefTxId?: string;
 
-  @Column({ nullable: true, length: 50 })
-  settleType?: string; // platformTxId | roundId etc
-
   @Column({ default: false })
   isPremium?: boolean;
 
@@ -80,17 +77,9 @@ export class Bet {
   @Column({ type: 'datetime', precision: 3, nullable: true })
   settledAt?: Date;
 
-  @Column({ length: 32, default: 'SPADE' })
-  platform?: string;
-
-  @Column({ length: 32, default: 'LIVE' })
-  gameType?: string;
-
-  @Column({ length: 64, default: 'chicken-road-2' })
-  gameCode?: string;
-
-  @Column({ length: 64, default: 'ChickenRoad' })
-  gameName?: string;
+  @Index()
+  @Column({ length: 64, nullable: false })
+  gameCode: string;
 
   @Column({ type: 'text', nullable: true })
   gameInfo?: string;

@@ -52,8 +52,8 @@ export class AgentAuthGuard implements CanActivate {
       return true;
     }
 
-    const { agentId, cert } = this.extractCredentials(req);
-    const clientIp = await this.extractClientIp(req);
+    const { agentId, cert, gameCode } = this.extractCredentials(req);
+    const clientIp = await this.extractClientIp(req, gameCode);
 
     await this.validateAgent(agentId, cert, clientIp);
 
@@ -65,21 +65,22 @@ export class AgentAuthGuard implements CanActivate {
     return this.configService.get<boolean>('app.enableAuth') !== false;
   }
 
-  private extractCredentials(req: Request): { agentId: string; cert: string } {
+  private extractCredentials(req: Request): { agentId: string; cert: string, gameCode: string } {
     const body: any = req.body || {};
     const agentId: string | undefined = body.agentId;
     const cert: string | undefined = body.cert;
+    const gameCode: string | undefined = body.gameCode;
 
-    if (!agentId || !cert) {
+    if (!agentId || !cert || !gameCode) {
       this.logger.warn('Authentication attempt with missing credentials');
       throw new UnauthorizedException(ERROR_MESSAGES.MISSING_CREDENTIALS);
     }
 
-    return { agentId, cert };
+    return { agentId, cert, gameCode };
   }
 
-  private async extractClientIp(req: Request): Promise<string> {
-    const headerIp = await this.extractIpFromHeader(req);
+  private async extractClientIp(req: Request, gameCode: string): Promise<string> {
+    const headerIp = await this.extractIpFromHeader(req, gameCode);
     const rawIp =
       headerIp || req.ip || (req.socket && req.socket.remoteAddress) || '';
     return this.normalizeIp(rawIp);
@@ -155,8 +156,8 @@ export class AgentAuthGuard implements CanActivate {
     return false;
   }
 
-  private async extractIpFromHeader(req: Request): Promise<string | undefined> {
-    const configuredHeader = await this.getConfiguredIpHeader();
+  private async extractIpFromHeader(req: Request, gameCode: string): Promise<string | undefined> {
+    const configuredHeader = await this.getConfiguredIpHeader(gameCode);
 
     if (configuredHeader) {
       const value = req.headers[configuredHeader.toLowerCase()];
@@ -171,12 +172,12 @@ export class AgentAuthGuard implements CanActivate {
     return undefined;
   }
 
-  private async getConfiguredIpHeader(): Promise<string | undefined> {
+  private async getConfiguredIpHeader(gameCode: string): Promise<string | undefined> {
     if (this.isCacheValid()) {
       return this.ipHeaderCache!.header;
     }
 
-    const header = await this.fetchIpHeaderFromConfig();
+    const header = await this.fetchIpHeaderFromConfig(gameCode);
     this.updateCache(header);
 
     return header;
@@ -189,9 +190,11 @@ export class AgentAuthGuard implements CanActivate {
     );
   }
 
-  private async fetchIpHeaderFromConfig(): Promise<string | undefined> {
+  private async fetchIpHeaderFromConfig(gameCode: string): Promise<string | undefined> {
+    //TODO: Add support for multiple games
     try {
       const raw = await this.gameConfigService.getConfig(
+        gameCode,
         AUTH_CONSTANTS.CONFIG_KEY,
       );
 

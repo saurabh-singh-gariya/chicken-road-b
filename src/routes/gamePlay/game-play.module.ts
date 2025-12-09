@@ -11,6 +11,7 @@ import { SingleWalletFunctionsModule } from '../single-wallet-functions/single-w
 import { GamePlayGateway } from './game-play.gateway';
 import { GamePlayService } from './game-play.service';
 import { UserModule } from '../../modules/user/user.module';
+import { GameModule } from 'src/modules/games/game.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { UserModule } from '../../modules/user/user.module';
     SingleWalletFunctionsModule,
     UserModule,
     LastWinModule,
+    GameModule,
   ],
   providers: [GamePlayGateway, GamePlayService],
   exports: [GamePlayGateway, GamePlayService],

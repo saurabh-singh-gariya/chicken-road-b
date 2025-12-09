@@ -24,7 +24,10 @@ import { CommonApiFunctionsModule } from './routes/common-api-functions/common-a
 import { GameApiRoutesModule } from './routes/game-api-routes/game-api-routes.module';
 import { GamePlayModule } from './routes/gamePlay/game-play.module';
 import { SingleWalletFunctionsModule } from './routes/single-wallet-functions/single-wallet-functions.module';
-import {HealthController} from './routes/extra/health.controller';
+import { HealthController } from './routes/extra/health.controller';
+import { Game } from './entities/game.entity';
+import { GameModule } from './modules/games/game.module';
+import { AppController } from './app.controller';
 
 @Module({
   imports: [
@@ -55,24 +58,14 @@ import {HealthController} from './routes/extra/health.controller';
           database: dbConfig?.database,
           synchronize: dbConfig?.synchronize,
           autoLoadEntities: true,
-          entities: [User, Agents, GameConfig, Bet, WalletAudit, WalletRetryJob],
-          // Connection pool optimization - CRITICAL BOTTLENECK FIX
+          entities: [User, Agents, GameConfig, Bet, WalletAudit, WalletRetryJob, Game],
           extra: {
+            // Valid MySQL2 connection pool options for TypeORM
             connectionLimit: parseInt(
               process.env.DB_CONNECTION_LIMIT || '30',
               10,
-            ), // Default: 30 connections per pod (was 10)
-            acquireTimeout: 60000, // 60 seconds to acquire connection
-            timeout: 60000, // 60 seconds query timeout
-            reconnect: true,
-            // Enable connection pooling
-            pool: {
-              min: 5, // Minimum connections in pool
-              max: parseInt(process.env.DB_CONNECTION_LIMIT || '30', 10), // Maximum connections
-              idleTimeoutMillis: 30000, // Close idle connections after 30s
-            },
+            )
           },
-          // logging: ['error'] // optional, omit for compatibility
         };
         Logger.log(
           `Database config -> host=${cfgObj.host} port=${cfgObj.port} db=${cfgObj.database} sync=${cfgObj.synchronize}`,
@@ -80,7 +73,7 @@ import {HealthController} from './routes/extra/health.controller';
         return cfgObj;
       },
     }),
-    TypeOrmModule.forFeature([User, GameConfig, Agents]),
+    TypeOrmModule.forFeature([User, GameConfig, Agents, Game]),
     AgentsModule,
     HazardModule,
     BetModule,
@@ -91,8 +84,9 @@ import {HealthController} from './routes/extra/health.controller';
     GameApiRoutesModule,
     GamePlayModule,
     SingleWalletFunctionsModule,
+    GameModule,
   ],
-  controllers: [HealthController],
+  controllers: [HealthController, AppController],
   providers: [],
 })
-export class AppModule {}
+export class AppModule { }

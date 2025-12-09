@@ -71,7 +71,7 @@ export const DEFAULTS = {
     INITIAL_STEP: -1,
     PLATFORM_NAME: 'In-out',
     GAME_TYPE: 'CRASH',
-    GAME_CODE: 'chicken-road-2',
+    GAME_CODE: 'chicken-road-two',
     GAME_NAME: 'chicken-road-2',
     GAME_MODE: 'chicken-road-two',
     SETTLEMENT_AMOUNT_ZERO: 0.0,

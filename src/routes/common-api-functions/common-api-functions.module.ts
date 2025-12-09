@@ -7,9 +7,10 @@ import { UserModule } from '../../modules/user/user.module';
 import { UserSessionModule } from '../../modules/user-session/user-session.module';
 import { CommonApiFunctionsController } from './common-api-functions.controller';
 import { CommonApiFunctionsService } from './common-api-functions.service';
+import { GameModule } from '../../modules/games/game.module';
 
 @Module({
-  imports: [AgentsModule, GameConfigModule, UserModule, JwtTokenModule, UserSessionModule],
+  imports: [AgentsModule, GameConfigModule, UserModule, JwtTokenModule, UserSessionModule, GameModule],
   controllers: [CommonApiFunctionsController],
   providers: [CommonApiFunctionsService, AgentAuthGuard],
   exports: [],

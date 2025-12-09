@@ -23,6 +23,15 @@ export class Agents {
   @Column({ default: true })
   isWhitelisted: boolean;
 
+  @Column({ type: 'json', nullable: true})
+  allowedGameCodes?: string[];
+
+  @Column({ name: 'password_hash' })
+  passwordHash: string;
+
+  @Column({ nullable: true })
+  currency?: string;
+
   @CreateDateColumn()
   createdAt: Date;
 
