@@ -138,6 +138,9 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
 
     try {
       const rawConfig = await this.gameConfigService.getConfig(gameCode, 'hazardConfig');
+      if (!rawConfig) {
+        throw new Error(`Config 'hazardConfig' not found for game ${gameCode}`);
+      }
       const config =
         typeof rawConfig === 'string' ? JSON.parse(rawConfig) : rawConfig;
 
@@ -301,6 +304,10 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
+      this.logger.debug(
+        `[${gameCode}] ${difficulty}: Starting initialization - loading config...`,
+      );
+      
       const hazardCount = await this.getHazardCount(gameCode, difficulty);
       const refreshMs = await this.getRefreshMs(gameCode);
       const now = Date.now();
@@ -308,6 +315,10 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
 
       // Get total columns for this game and difficulty
       const totalColumns = await this.getTotalColumns(gameCode, difficulty);
+      
+      this.logger.debug(
+        `[${gameCode}] ${difficulty}: Config loaded - hazardCount=${hazardCount}, totalColumns=${totalColumns}, refreshMs=${refreshMs}`,
+      );
 
       // Generate initial current and next patterns
       const current = this.hazardGenerator.generateRandomPattern(
@@ -578,23 +589,115 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
     if (!state) {
       const isLeader = await this.leaderElection.isLeader();
       if (isLeader) {
-        this.logger.debug(
+        this.logger.log(
           `[${gameCode}] ${difficulty}: No state found, leader initializing`,
         );
-        await this.initializeGameDifficulty(gameCode, difficulty);
-        state = this.states[stateKey];
+        try {
+          await this.initializeGameDifficulty(gameCode, difficulty);
+          state = this.states[stateKey];
+          if (!state) {
+            this.logger.error(
+              `[${gameCode}] ${difficulty}: Initialization completed but state is still null`,
+            );
+          }
+        } catch (error) {
+          this.logger.error(
+            `[${gameCode}] ${difficulty}: Failed to initialize hazards: ${error.message}`,
+            error.stack,
+          );
+          // Try to use defaults as fallback
+          try {
+            const hazardCount = await this.getHazardCount(gameCode, difficulty);
+            const totalColumns = await this.getTotalColumns(gameCode, difficulty);
+            const refreshMs = await this.getRefreshMs(gameCode);
+            const now = Date.now();
+            const current = this.hazardGenerator.generateRandomPattern(hazardCount, totalColumns);
+            const next = this.hazardGenerator.generateRandomPattern(hazardCount, totalColumns);
+            state = {
+              gameCode,
+              difficulty,
+              current,
+              next,
+              changeAt: now + refreshMs,
+              hazardCount,
+              generatedAt: new Date(now).toISOString(),
+            };
+            this.states[stateKey] = state;
+            const ttlSeconds = Math.ceil((refreshMs * DEFAULTS.GAME.HAZARD_TTL_MULTIPLIER) / 1000);
+            await this.redisService.set(this.redisKey(gameCode, difficulty), state, ttlSeconds);
+            this.logger.log(
+              `[${gameCode}] ${difficulty}: Created fallback state [${current.join(',')}]`,
+            );
+          } catch (fallbackError) {
+            this.logger.error(
+              `[${gameCode}] ${difficulty}: Fallback initialization also failed: ${fallbackError.message}`,
+            );
+          }
+        }
       } else {
-        // Follower: try to get from Redis one more time
+        // Follower: try to get from Redis one more time, then wait a bit
+        this.logger.debug(
+          `[${gameCode}] ${difficulty}: No state found and not leader. Checking Redis again...`,
+        );
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second for leader to initialize
         const redisState = await this.redisService.get<HazardState>(
           this.redisKey(gameCode, difficulty),
         );
         if (redisState) {
           state = redisState;
           this.states[stateKey] = state;
-        } else {
-          this.logger.warn(
-            `[${gameCode}] ${difficulty}: No state found and not leader. Waiting for leader to initialize.`,
+          await this.ensureRotationListener(gameCode, difficulty);
+          this.logger.log(
+            `[${gameCode}] ${difficulty}: State loaded from Redis after wait: [${state.current.join(',')}]`,
           );
+        } else {
+          // Leader hasn't initialized after wait - follower should initialize as fallback
+          // This prevents the system from being stuck if leader is slow or has issues
+          // Note: initializeGameDifficulty uses distributed lock, so it's safe for followers to call
+          this.logger.warn(
+            `[${gameCode}] ${difficulty}: No state found after waiting for leader. Follower will initialize as fallback.`,
+          );
+          try {
+            await this.initializeGameDifficulty(gameCode, difficulty);
+            state = this.states[stateKey];
+            if (state) {
+              this.logger.log(
+                `[${gameCode}] ${difficulty}: Follower initialized state: [${state.current.join(',')}]`,
+              );
+            } else {
+              // If initialization didn't create state, try one more time with fallback
+              this.logger.warn(
+                `[${gameCode}] ${difficulty}: Initialization didn't create state, trying fallback creation`,
+              );
+              const hazardCount = await this.getHazardCount(gameCode, difficulty);
+              const totalColumns = await this.getTotalColumns(gameCode, difficulty);
+              const refreshMs = await this.getRefreshMs(gameCode);
+              const now = Date.now();
+              const current = this.hazardGenerator.generateRandomPattern(hazardCount, totalColumns);
+              const next = this.hazardGenerator.generateRandomPattern(hazardCount, totalColumns);
+              state = {
+                gameCode,
+                difficulty,
+                current,
+                next,
+                changeAt: now + refreshMs,
+                hazardCount,
+                generatedAt: new Date(now).toISOString(),
+              };
+              this.states[stateKey] = state;
+              const ttlSeconds = Math.ceil((refreshMs * DEFAULTS.GAME.HAZARD_TTL_MULTIPLIER) / 1000);
+              await this.redisService.set(this.redisKey(gameCode, difficulty), state, ttlSeconds);
+              await this.ensureRotationListener(gameCode, difficulty);
+              this.logger.log(
+                `[${gameCode}] ${difficulty}: Follower created fallback state [${current.join(',')}]`,
+              );
+            }
+          } catch (initError) {
+            this.logger.error(
+              `[${gameCode}] ${difficulty}: Follower initialization failed: ${initError.message}`,
+              initError.stack,
+            );
+          }
         }
       }
     }
@@ -607,6 +710,13 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
    */
   async getActiveHazards(gameCode: string, difficulty: Difficulty): Promise<number[]> {
     const state = await this.getCurrentState(gameCode, difficulty);
+    if (!state) {
+      this.logger.error(
+        `[${gameCode}] ${difficulty}: No hazard state available, returning empty array`,
+      );
+      // Return empty array if state is not available (shouldn't happen, but prevents crashes)
+      return [];
+    }
     return this.hazardGenerator.getActivePattern(state);
   }
 
@@ -648,6 +758,26 @@ export class HazardSchedulerService implements OnModuleInit, OnModuleDestroy {
     await this.rotateGameDifficulty(gameCode, difficulty);
     const stateKey = this.stateKey(gameCode, difficulty);
     return this.states[stateKey];
+  }
+
+  /**
+   * Force initialization of hazards for a game and difficulty
+   * Can be called by any server (uses distributed lock)
+   * Useful for ensuring hazards are initialized for new games
+   */
+  async forceInitialize(gameCode: string, difficulty: Difficulty): Promise<HazardState> {
+    this.logger.log(
+      `[${gameCode}] ${difficulty}: Force initialization requested`,
+    );
+    await this.initializeGameDifficulty(gameCode, difficulty);
+    const stateKey = this.stateKey(gameCode, difficulty);
+    const state = this.states[stateKey];
+    if (!state) {
+      throw new Error(
+        `Failed to initialize hazards for ${gameCode} ${difficulty}`,
+      );
+    }
+    return state;
   }
 
   /**

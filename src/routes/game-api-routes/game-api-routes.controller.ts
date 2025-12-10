@@ -6,9 +6,10 @@ import {
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { AuthLoginDto, AuthLoginResponse } from './DTO/auth-login.dto';
 import { OnlineCounterResponse } from './DTO/online-counter.dto';
+import { CreateGameDto, CreateGameResponse } from './DTO/create-game.dto';
 import { GameApiRoutesService } from './game-api-routes.service';
 
 @ApiTags('game-api')
@@ -33,5 +34,16 @@ export class GameApiRoutesController {
 
     const token = authorization.substring(7);
     return this.service.getOnlineCounter(token);
+  }
+
+  @Get('games')
+  async getActiveGames(): Promise<Array<{ gameCode: string; gameName: string; isActive: boolean }>> {
+    return this.service.getActiveGames();
+  }
+
+  @Post('games')
+  @ApiOperation({ summary: 'Create a new game with automatic onboarding' })
+  async createGame(@Body() body: CreateGameDto): Promise<CreateGameResponse> {
+    return this.service.createGameWithOnboarding(body);
   }
 }

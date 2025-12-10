@@ -47,6 +47,7 @@ export class GameConfigService {
       );
 
       if (!result || result.length === 0) {
+        this.logger.warn(`Config key "${key}" not found in table ${tableName} for game ${gameCode}`);
         return null;
       }
 
@@ -56,8 +57,15 @@ export class GameConfigService {
         value: result[0].value,
         updatedAt: result[0].updatedAt,
       } as GameConfig;
-    } catch (error) {
-      this.logger.error(`Error getting config from table ${tableName}: ${error}`);
+    } catch (error: any) {
+      // Check if it's a table doesn't exist error
+      if (error.code === 'ER_NO_SUCH_TABLE' || error.message?.includes("doesn't exist")) {
+        this.logger.error(
+          `Config table ${tableName} does not exist for game ${gameCode}. Please create it first.`,
+        );
+        throw new Error(`Config table ${tableName} does not exist for game ${gameCode}`);
+      }
+      this.logger.error(`Error getting config from table ${tableName}: ${error.message || error}`);
       throw error;
     }
   }

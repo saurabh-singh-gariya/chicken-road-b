@@ -1,8 +1,15 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { JwtTokenService } from '../../modules/jwt/jwt-token.service';
 import { UserSessionService } from '../../modules/user-session/user-session.service';
+import { GameService } from '../../modules/games/game.service';
+import { GameConfigService } from '../../modules/gameConfig/game-config.service';
+import { HazardSchedulerService } from '../../modules/hazard/hazard-scheduler.service';
+import { Difficulty } from '../gamePlay/DTO/bet-payload.dto';
 import { AuthLoginDto, AuthLoginResponse } from './DTO/auth-login.dto';
 import { OnlineCounterResponse } from './DTO/online-counter.dto';
+import { CreateGameDto, CreateGameResponse } from './DTO/create-game.dto';
 
 @Injectable()
 export class GameApiRoutesService {
@@ -11,6 +18,11 @@ export class GameApiRoutesService {
   constructor(
     private readonly jwtTokenService: JwtTokenService,
     private readonly userSessionService: UserSessionService,
+    private readonly gameService: GameService,
+    private readonly gameConfigService: GameConfigService,
+    private readonly hazardSchedulerService: HazardSchedulerService,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   async authenticateGame(dto: AuthLoginDto): Promise<AuthLoginResponse> {
@@ -57,7 +69,8 @@ export class GameApiRoutesService {
     );
 
     // Add user to logged-in sessions
-    await this.userSessionService.addSession(userId, agentId);
+    // Note: game_mode from DTO is the gameCode
+    await this.userSessionService.addSession(userId, agentId, dto.game_mode);
 
     this.logger.log(
       `[TOKEN_VERIFIED] user=${userId} agent=${agentId} operator=${dto.operator} currency=${dto.currency} gameMode=${dto.game_mode} tokenGenerated=true`,
@@ -198,6 +211,135 @@ export class GameApiRoutesService {
           "chicken-road-97-hard": 0
         }
       }
+    }
+  }
+
+  async getActiveGames(): Promise<Array<{ gameCode: string; gameName: string; isActive: boolean }>> {
+    this.logger.log(`[getActiveGames] Request received`);
+    const games = await this.gameService.getActiveGames();
+    return games
+      .filter(game => game.isActive)
+      .map(game => ({
+        gameCode: game.gameCode,
+        gameName: game.gameName,
+        isActive: game.isActive,
+      }));
+  }
+
+  /**
+   * Normalize gameCode for table names (hyphens to underscores)
+   */
+  private normalizeGameCode(gameCode: string): string {
+    return gameCode.toLowerCase().replace(/-/g, '_');
+  }
+
+  /**
+   * Create a new game with automatic onboarding:
+   * 1. Create game in games table
+   * 2. Create config table
+   * 3. Copy configs from game_config table (default source)
+   * 4. Initialize hazards for all difficulties
+   */
+  async createGameWithOnboarding(dto: CreateGameDto): Promise<CreateGameResponse> {
+    this.logger.log(`[createGameWithOnboarding] Creating game: ${dto.gameCode}`);
+
+    const normalizedGameCode = this.normalizeGameCode(dto.gameCode);
+    const configTableName = `game_config_${normalizedGameCode}`;
+    const sourceConfigTableName = 'game_config';
+
+    try {
+      // Step 1: Create game in games table
+      this.logger.log(`[createGameWithOnboarding] Step 1: Creating game in games table`);
+      const game = await this.gameService.createGame({
+        gameCode: dto.gameCode,
+        gameName: dto.gameName,
+        platform: dto.platform,
+        gameType: dto.gameType,
+        settleType: dto.settleType,
+        isActive: true,
+      });
+      this.logger.log(`[createGameWithOnboarding] Game created: ${game.id}`);
+
+      // Step 2: Create config table
+      this.logger.log(`[createGameWithOnboarding] Step 2: Creating config table: ${configTableName}`);
+      const createTableQuery = `
+        CREATE TABLE IF NOT EXISTS \`${configTableName}\` (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          \`key\` VARCHAR(255) NOT NULL,
+          value TEXT,
+          updatedAt DATETIME,
+          UNIQUE KEY uk_key (\`key\`),
+          INDEX idx_key (\`key\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `;
+      await this.dataSource.query(createTableQuery);
+      this.logger.log(`[createGameWithOnboarding] Config table created: ${configTableName}`);
+
+      this.logger.log(`[createGameWithOnboarding] Step 3: Copying configs from ${sourceConfigTableName}`);
+      let configsCopied = 0;
+      try {
+        const sourceTableExists = await this.dataSource.query(
+          `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.TABLES 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+          [sourceConfigTableName]
+        );
+
+        if (sourceTableExists[0]?.count > 0) {
+          const copyQuery = `
+            INSERT INTO \`${configTableName}\` (\`key\`, value, updatedAt)
+            SELECT \`key\`, value, NOW()
+            FROM \`${sourceConfigTableName}\`
+            ON DUPLICATE KEY UPDATE value = VALUES(value), updatedAt = NOW();
+          `;
+          const result = await this.dataSource.query(copyQuery);
+          configsCopied = result.affectedRows || 0;
+          this.logger.log(`[createGameWithOnboarding] Copied ${configsCopied} configs from ${sourceConfigTableName}`);
+        } else {
+          this.logger.warn(`[createGameWithOnboarding] Source config table ${sourceConfigTableName} does not exist. Skipping config copy.`);
+        }
+      } catch (error) {
+        this.logger.error(`[createGameWithOnboarding] Error copying configs: ${error.message}`);
+      }
+
+      this.logger.log(`[createGameWithOnboarding] Step 4: Initializing hazards for all difficulties`);
+      let hazardsInitialized = false;
+      try {
+        const difficulties = [Difficulty.EASY, Difficulty.MEDIUM, Difficulty.HARD, Difficulty.DAREDEVIL];
+        for (const difficulty of difficulties) {
+          try {
+            await this.hazardSchedulerService.forceInitialize(dto.gameCode, difficulty);
+            this.logger.log(`[createGameWithOnboarding] Hazards initialized for ${dto.gameCode} ${difficulty}`);
+          } catch (error) {
+            this.logger.warn(`[createGameWithOnboarding] Failed to initialize hazards for ${dto.gameCode} ${difficulty}: ${error.message}`);
+          }
+        }
+        hazardsInitialized = true;
+        this.logger.log(`[createGameWithOnboarding] Hazards initialization completed for ${dto.gameCode}`);
+      } catch (error) {
+        this.logger.error(`[createGameWithOnboarding] Error initializing hazards: ${error.message}`);
+      }
+
+      this.logger.log(`[createGameWithOnboarding] ✅ Game onboarding completed: ${dto.gameCode}`);
+
+      return {
+        success: true,
+        message: `Game ${dto.gameCode} created and onboarded successfully`,
+        game: {
+          id: game.id,
+          gameCode: game.gameCode,
+          gameName: game.gameName,
+          platform: game.platform,
+          gameType: game.gameType,
+          settleType: game.settleType,
+          isActive: game.isActive,
+        },
+        configTableCreated: true,
+        configsCopied,
+        hazardsInitialized,
+      };
+    } catch (error) {
+      this.logger.error(`[createGameWithOnboarding] Error creating game: ${error.message}`);
+      throw error;
     }
   }
 }

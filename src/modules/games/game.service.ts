@@ -1,5 +1,5 @@
 import { Game } from "../../entities/game.entity";
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 
@@ -29,7 +29,7 @@ export class GameService {
     }
 
     async getActiveGames(): Promise<Game[]> {
-        const games = await this.gameRepository.find()
+        const games = await this.gameRepository.find({ where: { isActive: true } })
         return games
     }
 
@@ -48,5 +48,31 @@ export class GameService {
             gameType: game.gameType,
             settleType: game.settleType,
         }
+    }
+
+    async createGame(params: {
+        gameCode: string;
+        gameName: string;
+        platform?: string;
+        gameType?: string;
+        settleType?: string;
+        isActive?: boolean;
+    }): Promise<Game> {
+        // Check if game already exists
+        const existing = await this.gameRepository.findOne({ where: { gameCode: params.gameCode } });
+        if (existing) {
+            throw new ConflictException(`Game with code ${params.gameCode} already exists`);
+        }
+
+        const game = this.gameRepository.create({
+            gameCode: params.gameCode,
+            gameName: params.gameName,
+            platform: params.platform || 'In-out',
+            gameType: params.gameType || 'CRASH',
+            settleType: params.settleType || 'platformTxId',
+            isActive: params.isActive !== undefined ? params.isActive : true,
+        });
+
+        return await this.gameRepository.save(game);
     }
 }
