@@ -23,3 +23,4 @@ export enum WalletErrorType {
   UNKNOWN_ERROR = 'unknown_error',
 }
 
+
