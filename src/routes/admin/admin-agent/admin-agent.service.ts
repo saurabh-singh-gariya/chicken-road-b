@@ -32,9 +32,12 @@ export class AdminAgentService {
 
     /**
      * Get agent statistics grouped by agent-platform-game combination
+     * @param queryDto Query parameters
+     * @param adminAgentId Agent ID of the logged-in admin (null for Super Admin)
      */
     async findAll(
         queryDto: AgentQueryDto,
+        adminAgentId?: string | null,
     ): Promise<{ agents: AgentResponseDto[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
         const page = queryDto.page || 1;
         const limit = queryDto.limit || 20;
@@ -77,8 +80,11 @@ export class AdminAgentService {
             .addGroupBy('game.platform')
             .addGroupBy('bet.gameCode');
 
-        // Apply filters
-        if (queryDto.agentId) {
+        // For Agent Admin, force filter to their own agentId (ignore queryDto.agentId)
+        if (adminAgentId) {
+            queryBuilder.andWhere('bet.operatorId = :adminAgentId', { adminAgentId });
+        } else if (queryDto.agentId) {
+            // Super Admin can filter by any agentId
             queryBuilder.andWhere('bet.operatorId = :agentId', { agentId: queryDto.agentId });
         }
 
@@ -100,7 +106,9 @@ export class AdminAgentService {
             .andWhere('bet.betPlacedAt <= :toDate', { toDate });
 
         // Apply same filters to count query
-        if (queryDto.agentId) {
+        if (adminAgentId) {
+            countQuery.andWhere('bet.operatorId = :adminAgentId', { adminAgentId });
+        } else if (queryDto.agentId) {
             countQuery.andWhere('bet.operatorId = :agentId', { agentId: queryDto.agentId });
         }
         if (queryDto.platform) {
@@ -159,9 +167,12 @@ export class AdminAgentService {
 
     /**
      * Get agent totals (aggregated across all matching records)
+     * @param queryDto Query parameters
+     * @param adminAgentId Agent ID of the logged-in admin (null for Super Admin)
      */
     async getTotals(
         queryDto: AgentQueryDto,
+        adminAgentId?: string | null,
     ): Promise<AgentTotalsDto> {
         // Parse and validate date range
         const fromDate = queryDto.fromDate ? new Date(queryDto.fromDate) : null;
@@ -193,8 +204,11 @@ export class AdminAgentService {
             .where('bet.betPlacedAt >= :fromDate', { fromDate })
             .andWhere('bet.betPlacedAt <= :toDate', { toDate });
 
-        // Apply filters
-        if (queryDto.agentId) {
+        // For Agent Admin, force filter to their own agentId (ignore queryDto.agentId)
+        if (adminAgentId) {
+            queryBuilder.andWhere('bet.operatorId = :adminAgentId', { adminAgentId });
+        } else if (queryDto.agentId) {
+            // Super Admin can filter by any agentId
             queryBuilder.andWhere('bet.operatorId = :agentId', { agentId: queryDto.agentId });
         }
 
@@ -230,30 +244,49 @@ export class AdminAgentService {
     /**
      * Get distinct filter options for agents
      * Returns distinct values for games, platforms, and agentIds
+     * @param adminRole Role of the logged-in admin
+     * @param adminAgentId Agent ID of the logged-in admin (null for Super Admin)
      */
     async getFilterOptions(
         adminRole: string,
+        adminAgentId?: string | null,
     ): Promise<AgentFilterOptionsDto> {
-        // Get distinct game codes from bets
+        // Build base query with agent filter if needed
+        let baseWhere = '';
+        let baseParams: any = {};
+        if (adminAgentId) {
+            baseWhere = 'bet.operatorId = :adminAgentId';
+            baseParams = { adminAgentId };
+        }
+
+        // Get distinct game codes from bets (filtered by agent if Agent Admin)
         const gameQuery = this.betRepository.createQueryBuilder('bet')
             .select('DISTINCT bet.gameCode', 'gameCode')
             .where('bet.gameCode IS NOT NULL')
             .andWhere('bet.gameCode != ""');
         
+        if (adminAgentId) {
+            gameQuery.andWhere(baseWhere, baseParams);
+        }
+        
         const gameResults = await gameQuery.getRawMany();
         const games = gameResults.map((r) => r.gameCode).filter(Boolean).sort();
 
-        // Get distinct platforms from games table (only for games that have bets)
+        // Get distinct platforms from games table (only for games that have bets, filtered by agent if Agent Admin)
         const platformQuery = this.betRepository.createQueryBuilder('bet')
             .leftJoin(Game, 'game', 'game.gameCode = bet.gameCode AND game.isActive = 1')
             .select('DISTINCT game.platform', 'platform')
             .where('game.platform IS NOT NULL')
             .andWhere('game.platform != ""');
         
+        if (adminAgentId) {
+            platformQuery.andWhere(baseWhere, baseParams);
+        }
+        
         const platformResults = await platformQuery.getRawMany();
         const platforms = platformResults.map((r) => r.platform).filter(Boolean).sort();
 
-        // Get distinct agent IDs (only for Super Admin)
+        // Get distinct agent IDs (only for Super Admin, not returned for Agent Admin)
         let agentIds: string[] | undefined;
         if (adminRole === AdminRole.SUPER_ADMIN) {
             const agentQuery = this.betRepository.createQueryBuilder('bet')

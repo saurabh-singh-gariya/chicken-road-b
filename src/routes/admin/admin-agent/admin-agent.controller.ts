@@ -22,7 +22,7 @@ export class AdminAgentController {
     constructor(private readonly adminAgentService: AdminAgentService) {}
 
     @Get()
-    @Roles(AdminRole.SUPER_ADMIN)
+    @Roles(AdminRole.SUPER_ADMIN, AdminRole.ADMIN)
     @ApiOperation({ summary: 'Get agent statistics grouped by agent-platform-game' })
     @ApiResponse({
         status: 200,
@@ -30,9 +30,14 @@ export class AdminAgentController {
         type: [AgentResponseDto],
     })
     @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden - Super Admin only' })
-    async getAgents(@Query() queryDto: AgentQueryDto) {
-        const result = await this.adminAgentService.findAll(queryDto);
+    @ApiResponse({ status: 403, description: 'Forbidden' })
+    async getAgents(
+        @Query() queryDto: AgentQueryDto,
+        @CurrentAdmin() admin: AdminTokenPayload,
+    ) {
+        // For Agent Admin, force filter to their own agentId
+        const adminAgentId = admin.role === AdminRole.SUPER_ADMIN ? null : (admin.agentId || admin.username);
+        const result = await this.adminAgentService.findAll(queryDto, adminAgentId);
         return {
             status: '0000',
             data: result,
@@ -40,7 +45,7 @@ export class AdminAgentController {
     }
 
     @Get('totals')
-    @Roles(AdminRole.SUPER_ADMIN)
+    @Roles(AdminRole.SUPER_ADMIN, AdminRole.ADMIN)
     @ApiOperation({ summary: 'Get agent totals across all matching records' })
     @ApiResponse({
         status: 200,
@@ -48,9 +53,14 @@ export class AdminAgentController {
         type: AgentTotalsDto,
     })
     @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden - Super Admin only' })
-    async getAgentTotals(@Query() queryDto: AgentQueryDto) {
-        const totals = await this.adminAgentService.getTotals(queryDto);
+    @ApiResponse({ status: 403, description: 'Forbidden' })
+    async getAgentTotals(
+        @Query() queryDto: AgentQueryDto,
+        @CurrentAdmin() admin: AdminTokenPayload,
+    ) {
+        // For Agent Admin, force filter to their own agentId
+        const adminAgentId = admin.role === AdminRole.SUPER_ADMIN ? null : (admin.agentId || admin.username);
+        const totals = await this.adminAgentService.getTotals(queryDto, adminAgentId);
         return {
             status: '0000',
             data: totals,
@@ -58,7 +68,7 @@ export class AdminAgentController {
     }
 
     @Get('filter-options')
-    @Roles(AdminRole.SUPER_ADMIN)
+    @Roles(AdminRole.SUPER_ADMIN, AdminRole.ADMIN)
     @ApiOperation({ summary: 'Get distinct filter options (games, platforms, agentIds)' })
     @ApiResponse({
         status: 200,
@@ -66,12 +76,15 @@ export class AdminAgentController {
         type: AgentFilterOptionsDto,
     })
     @ApiResponse({ status: 401, description: 'Unauthorized' })
-    @ApiResponse({ status: 403, description: 'Forbidden - Super Admin only' })
+    @ApiResponse({ status: 403, description: 'Forbidden' })
     async getFilterOptions(
         @CurrentAdmin() admin: AdminTokenPayload,
     ) {
+        // For Agent Admin, pass their agentId to filter options
+        const adminAgentId = admin.role === AdminRole.SUPER_ADMIN ? null : (admin.agentId || admin.username);
         const options = await this.adminAgentService.getFilterOptions(
             admin.role,
+            adminAgentId,
         );
 
         return {
