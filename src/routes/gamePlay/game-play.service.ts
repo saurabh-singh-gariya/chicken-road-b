@@ -451,6 +451,19 @@ export class GamePlayService {
           );
           // Don't fail settlement if seed rotation fails
         }
+
+        // Delete session from Redis after successful settlement (bet is now WON or LOST)
+        try {
+          await this.redisService.del(redisKey);
+          this.logger.debug(
+            `Deleted game session from Redis after settlement: user=${userId} txId=${gameSession.platformBetTxId}`,
+          );
+        } catch (deleteError) {
+          this.logger.warn(
+            `Failed to delete session after settlement: user=${userId} txId=${gameSession.platformBetTxId} error=${deleteError.message}`,
+          );
+          // Don't fail settlement if session deletion fails
+        }
       } catch (error: any) {
         this.logger.error(
           `Settlement failed: user=${userId} txId=${gameSession.platformBetTxId}`,
@@ -575,6 +588,19 @@ export class GamePlayService {
           `Failed to rotate seeds after cashout: user=${userId} agent=${agentId} error=${rotateError.message}`,
         );
         // Don't fail cashout if seed rotation fails
+      }
+
+      // Delete session from Redis after successful cashout settlement (bet is now WON)
+      try {
+        await this.redisService.del(redisKey);
+        this.logger.debug(
+          `Deleted game session from Redis after cashout: user=${userId} txId=${gameSession.platformBetTxId}`,
+        );
+      } catch (deleteError) {
+        this.logger.warn(
+          `Failed to delete session after cashout: user=${userId} txId=${gameSession.platformBetTxId} error=${deleteError.message}`,
+        );
+        // Don't fail cashout if session deletion fails
       }
     } catch (error: any) {
       this.logger.error(

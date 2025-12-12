@@ -14,7 +14,6 @@ export enum BetStatus {
   LOST = 'lost',
   CANCELLED = 'cancelled',
   REFUNDED = 'refunded',
-  SETTLED = 'settled',
   SETTLEMENT_FAILED = 'settlement_failed',
 }
 

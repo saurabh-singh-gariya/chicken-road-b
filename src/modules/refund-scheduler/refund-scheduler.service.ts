@@ -14,13 +14,13 @@ import { DEFAULTS } from '../../config/defaults.config';
 /**
  * Scheduled service that periodically refunds bets in PLACED status
  * that are older than the Redis session TTL.
- * Runs every (Redis TTL + 5 minutes) to ensure all expired sessions are processed.
+ * Runs every (Redis TTL + 2 minutes) to ensure all expired sessions are processed.
  */
 @Injectable()
 export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RefundSchedulerService.name);
   private intervalTimer?: NodeJS.Timeout;
-  private readonly BUFFER_MINUTES = 5; // 5 minutes buffer as requested
+  private readonly BUFFER_MINUTES = 2; // 2 minutes buffer as requested
 
   constructor(
     private readonly betService: BetService,
@@ -142,9 +142,10 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
           const batch = bets.slice(i, i + BATCH_SIZE);
           
           try {
-            // Check if any session exists for bets in this batch (check each bet's gameCode)
+            // Check if any session exists for bets in this batch
+            // Only skip refund if session exists AND matches the bet's transaction ID AND is active
             const hasActiveSession = await Promise.all(
-              batch.map(bet => this.sessionExists(userId, operatorId, bet.gameCode))
+              batch.map(bet => this.sessionExistsForBet(userId, operatorId, bet.gameCode, bet.externalPlatformTxId))
             );
             if (hasActiveSession.some(active => active)) {
               skippedCount += batch.length;
@@ -189,6 +190,7 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
    * @param operatorId - Operator/Agent ID
    * @param gameCode - Game code
    * @returns true if session exists, false otherwise
+   * @deprecated Use sessionExistsForBet instead to check if session matches specific bet
    */
   private async sessionExists(userId: string, operatorId: string, gameCode: string): Promise<boolean> {
     try {
@@ -199,6 +201,70 @@ export class RefundSchedulerService implements OnModuleInit, OnModuleDestroy {
       // If Redis check fails, err on the side of caution and skip refund
       this.logger.warn(
         `Failed to check session existence for user ${userId} gameCode ${gameCode}: ${error.message}. Skipping refund to prevent race condition.`,
+      );
+      return true; // Return true to skip refund when check fails
+    }
+  }
+
+  /**
+   * Check if an active game session exists in Redis for the specific bet
+   * Only returns true if:
+   * 1. Session exists
+   * 2. Session is active (isActive === true)
+   * 3. Session's platformBetTxId matches the bet's externalPlatformTxId
+   * 
+   * This prevents skipping refunds when:
+   * - Session doesn't exist (expired)
+   * - Session exists but is inactive (game finished)
+   * - Session exists but is for a different bet (new bet placed)
+   * 
+   * @param userId - User ID
+   * @param operatorId - Operator/Agent ID
+   * @param gameCode - Game code
+   * @param betExternalPlatformTxId - The bet's externalPlatformTxId to match against
+   * @returns true if active session exists for this specific bet, false otherwise
+   */
+  private async sessionExistsForBet(
+    userId: string,
+    operatorId: string,
+    gameCode: string,
+    betExternalPlatformTxId: string,
+  ): Promise<boolean> {
+    try {
+      const redisKey = `gameSession:${userId}-${operatorId}-${gameCode}`;
+      const session = await this.redisService.get<any>(redisKey);
+      
+      // No session exists - can refund
+      if (!session) {
+        return false;
+      }
+
+      // Session exists but is inactive - can refund
+      if (session.isActive !== true) {
+        this.logger.debug(
+          `Session exists but is inactive for bet ${betExternalPlatformTxId}, proceeding with refund`,
+        );
+        return false;
+      }
+
+      // Session exists and is active, but check if it's for this specific bet
+      // If platformBetTxId doesn't match, it means it's a different bet's session
+      if (session.platformBetTxId !== betExternalPlatformTxId) {
+        this.logger.debug(
+          `Session exists but for different bet (session: ${session.platformBetTxId}, bet: ${betExternalPlatformTxId}), proceeding with refund`,
+        );
+        return false;
+      }
+
+      // Session exists, is active, and matches this bet - skip refund
+      this.logger.debug(
+        `Active session found for bet ${betExternalPlatformTxId}, skipping refund`,
+      );
+      return true;
+    } catch (error) {
+      // If Redis check fails, err on the side of caution and skip refund
+      this.logger.warn(
+        `Failed to check session existence for user ${userId} gameCode ${gameCode} bet ${betExternalPlatformTxId}: ${error.message}. Skipping refund to prevent race condition.`,
       );
       return true; // Return true to skip refund when check fails
     }

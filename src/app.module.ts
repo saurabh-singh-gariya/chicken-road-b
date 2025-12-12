@@ -28,6 +28,9 @@ import { HealthController } from './routes/extra/health.controller';
 import { Game } from './entities/game.entity';
 import { GameModule } from './modules/games/game.module';
 import { AppController } from './app.controller';
+import { Admin } from './entities/admin.entity';
+import { AdminModule } from './routes/admin/admin.module';
+import { RefundSchedulerModule } from './modules/refund-scheduler/refund-scheduler.module';
 
 @Module({
   imports: [
@@ -58,7 +61,7 @@ import { AppController } from './app.controller';
           database: dbConfig?.database,
           synchronize: dbConfig?.synchronize,
           autoLoadEntities: true,
-          entities: [User, Agents, GameConfig, Bet, WalletAudit, WalletRetryJob, Game],
+          entities: [User, Agents, GameConfig, Bet, WalletAudit, WalletRetryJob, Game, Admin],
           extra: {
             // Valid MySQL2 connection pool options for TypeORM
             connectionLimit: parseInt(
@@ -78,6 +81,7 @@ import { AppController } from './app.controller';
     HazardModule,
     BetModule,
     BetCleanupSchedulerModule,
+    RefundSchedulerModule,
     WalletAuditModule,
     WalletRetryModule,
     CommonApiFunctionsModule,
@@ -85,6 +89,7 @@ import { AppController } from './app.controller';
     GamePlayModule,
     SingleWalletFunctionsModule,
     GameModule,
+    AdminModule,
   ],
   controllers: [HealthController, AppController],
   providers: [],
